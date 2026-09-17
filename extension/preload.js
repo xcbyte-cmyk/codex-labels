@@ -2,7 +2,13 @@
 (() => {
   const {contextBridge, ipcRenderer} = require('electron');
   contextBridge.exposeInMainWorld('codexLabels', {
-    read: () => ipcRenderer.invoke('codex-labels:read'),
+    read: knownVersion => ipcRenderer.invoke('codex-labels:read', knownVersion),
+    onChanged: callback => {
+      if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+      const listener = () => callback();
+      ipcRenderer.on('codex-labels:changed', listener);
+      return () => ipcRenderer.removeListener('codex-labels:changed', listener);
+    },
     assign: (key, id) => ipcRenderer.invoke('codex-labels:assign', key, id),
     saveConfig: (config, revision) => ipcRenderer.invoke('codex-labels:save-config', config, revision),
     report: counts => ipcRenderer.invoke('codex-labels:report', counts),
