@@ -13,7 +13,7 @@ import uuid
 
 import prepare_runtime as builder
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
@@ -101,7 +101,7 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'labels.example.json']
+    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'labels.example.json']
     files += sorted((ASSETS/'extension').glob('*.js'))
     files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
     for file in files:
@@ -274,6 +274,11 @@ def launch(root):
     env = os.environ.copy()
     env['CODEX_ELECTRON_USER_DATA_PATH'] = str(profile)
     env.pop('ELECTRON_RUN_AS_NODE', None)
+    # The one-file helper's extraction directory is deleted when it exits.
+    # Do not let the app or a later same-path helper inherit that directory.
+    for name in list(env):
+        if name.startswith('_PYI_'):
+            del env[name]
     process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile)], cwd=exe.parent,
         env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
@@ -286,7 +291,7 @@ def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['prepare', 'launch', 'check'], nargs='?', default='prepare')
+    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage'], nargs='?', default='prepare')
     parser.add_argument('--root', type=Path, default=default_root())
     parser.add_argument('--source', type=Path)
     parser.add_argument('--shortcut', action='store_true')
@@ -296,7 +301,25 @@ def main():
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
-        if args.action == 'check':
+        if args.action in ('update-check', 'update-stage'):
+            import updater
+            if args.action == 'update-check':
+                result, _ = updater.release(VERSION)
+                receipt = read_receipt(root)
+                result['pendingRestart'] = bool(receipt and receipt.get('helperPayloadSha256') != payload_fingerprint())
+            else:
+                with preparation_lock(root):
+                    # Read installed metadata without forcing the OLD helper's
+                    # compatibility gate. A newer package may support a newer
+                    # Store app; its own builder still validates before patching.
+                    sources = [args.source.resolve()] if args.source else installed_sources()
+                    if not sources and builder.SOURCE.is_dir():
+                        sources = [builder.SOURCE]
+                    versions = {builder.source_version(source) for source in sources}
+                    if not versions:
+                        raise RuntimeError('이 PC의 공식 Codex 설치본을 찾지 못했습니다.')
+                    result = updater.stage(root, VERSION, versions)
+        elif args.action == 'check':
             source = find_source(args.source)
             try:
                 require_ready(root); ready = True

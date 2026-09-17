@@ -120,13 +120,14 @@ class WindowsHelperTests(unittest.TestCase):
         helper.prepare(self.root, self.source)
         profile = self.base/'profile'
         with patch.object(helper, 'profile_path', return_value=profile), \
-                patch.dict(helper.os.environ, {'ELECTRON_RUN_AS_NODE': '1', 'CODEX_HOME': 'existing-home'}), \
+                patch.dict(helper.os.environ, {'ELECTRON_RUN_AS_NODE': '1', 'CODEX_HOME': 'existing-home', '_PYI_APPLICATION_HOME_DIR':'deleted-extraction', '_PYI_PARENT_PROCESS_LEVEL':'1'}), \
                 patch.object(helper.subprocess, 'Popen', return_value=Mock(pid=123)) as spawn:
             status = helper.launch(self.root)
         args, kwargs = spawn.call_args
         self.assertEqual(args[0], [str(self.root.resolve()/'runtime/app/ChatGPT.exe'), '--user-data-dir=' + str(profile)])
         self.assertEqual(kwargs['env']['CODEX_HOME'], 'existing-home')
         self.assertNotIn('ELECTRON_RUN_AS_NODE', kwargs['env'])
+        self.assertFalse(any(name.startswith('_PYI_') for name in kwargs['env']))
         self.assertEqual(kwargs['env']['CODEX_ELECTRON_USER_DATA_PATH'], str(profile))
         self.assertEqual(status['status'], 'launch-requested')
 

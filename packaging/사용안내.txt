@@ -1,4 +1,4 @@
-Codex Labels 0.1.0 - Windows x64
+Codex Labels 0.2.0 - Windows x64
 
 처음 한 번
 1. 이 PC에 공식 Codex를 설치합니다.
@@ -15,10 +15,12 @@ Codex Labels 0.1.0 - Windows x64
 - 원본 Codex는 열어 두어도 됩니다. 다른 폴더의 Labels는 먼저 닫아 주세요.
 
 업데이트
-1. Codex Labels만 닫습니다.
-2. 새 ZIP을 기존 Labels 폴더에 압축 해제합니다.
-3. 설치.cmd를 다시 실행합니다. labels.json과 assignments.json은 덮어쓰지 않습니다.
-4. 실행합니다. 이전 실행본은 runtime/app.backup-날짜 폴더에 보관됩니다.
+1. 라벨 설정 → Codex Labels 업데이트 → 업데이트 확인을 누릅니다.
+2. 새 버전이 있으면 다운로드 및 다음 실행에 적용을 누릅니다.
+3. 준비 완료 안내 후 Labels를 완전히 종료하고 바탕화면 바로가기로 다시 실행합니다.
+4. 라벨 설정과 작업 지정은 유지됩니다. 이전 실행본은 runtime/app.backup-날짜 폴더에 보관됩니다.
+앱을 자동 종료하지 않습니다. 실패하면 오류를 확인하고 다시 시도할 수 있습니다.
+0.1.0에서 처음 업그레이드하거나 수동 설치할 때는 Labels를 닫고 새 ZIP을 기존 폴더에 풀어 설치.cmd를 실행합니다.
 
 다른 PC로 옮길 때
 - 이 ZIP을 옮겨 각 PC에서 따로 설치합니다. 만들어진 runtime 폴더나 로그인 프로필은 복사하지 마세요.

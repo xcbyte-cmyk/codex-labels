@@ -50,6 +50,7 @@
     #cdx-label-settings .cdx-settings-preview-row{display:flex;align-items:center;margin-top:8px;min-height:32px;color:#e4e7ec}
     #cdx-label-settings .cdx-settings-preview-badge{display:inline-flex;align-items:center;justify-content:center;line-height:1.4;font-weight:600;white-space:nowrap;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis}
     #cdx-label-settings details{margin-top:17px;border-top:1px solid #3c3f44;padding-top:12px}#cdx-label-settings summary{cursor:pointer;color:#dbe1e9}#cdx-label-settings .cdx-settings-appearance{margin-top:12px}
+    #cdx-label-settings .cdx-update-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
     #cdx-label-settings .cdx-settings-status{margin:0 24px 16px;padding:11px 13px;border:1px solid #9c7145;border-radius:7px;background:#3c3025;color:#ffd4a5;font-size:12px;overflow-wrap:anywhere}
     #cdx-label-settings .cdx-settings-status button{margin-top:8px;font-size:12px}
     #cdx-label-settings .cdx-settings-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:16px 24px;border-top:1px solid #3c3f44}
@@ -250,6 +251,29 @@
     enabled.addEventListener('change',()=>{current().enabled=enabled.checked;updatePreview();});
     const preview=element('div','cdx-settings-preview'),previewCaption=element('div','cdx-settings-help','미리보기'),previewRow=element('div','cdx-settings-preview-row'),previewBadge=element('span','cdx-settings-preview-badge'),previewHelp=element('p','cdx-settings-help');previewRow.append(previewBadge,document.createTextNode('프로젝트명'));preview.append(previewCaption,previewRow,previewHelp);editor.append(preview);
     const appearance=element('details'),appearanceTitle=element('summary',null,'배지 모양 · 모든 라벨에 적용'),appearanceFields=element('div','cdx-settings-fields cdx-settings-appearance');appearance.append(appearanceTitle,appearanceFields);editor.append(appearance);
+    if(typeof api.checkUpdate==='function'&&typeof api.stageUpdate==='function'){
+      const updates=element('details'),summary=element('summary',null,'Codex Labels 업데이트');
+      const message=element('p','cdx-settings-help','새 버전을 직접 확인합니다. 업데이트는 다음 실행 때 적용됩니다.');message.setAttribute('role','status');
+      let busy=false,result=null;
+      const check=button('업데이트 확인',null,()=>runUpdate(false));
+      const download=button('다운로드 및 다음 실행에 적용',null,()=>runUpdate(true));download.hidden=true;
+      const updateControls=()=>{check.disabled=busy;download.disabled=busy;download.hidden=!result?.available||!!result?.pendingRestart;};
+      state.updateControls=updateControls;
+      async function runUpdate(install){
+        if(busy)return;busy=true;updateControls();
+        message.textContent=install?'다운로드하고 파일을 검증하고 있습니다…':'새 버전을 확인하고 있습니다…';
+        try{
+          result=await (install?api.stageUpdate():api.checkUpdate());
+          message.textContent=result.pendingRestart
+            ?`v${result.currentVersion} 적용 준비 완료. Labels를 완전히 종료한 뒤 바탕화면 Codex Labels로 다시 실행해 주세요.`
+            :result.available?`현재 v${result.currentVersion} · 새 버전 v${result.latestVersion}. 다운로드 후 다음 실행 때 적용됩니다.`
+            :`현재 v${result.currentVersion} · 설치할 새 정식 버전이 없습니다.`;
+        }catch(error){result=null;message.textContent=error?.message||String(error);}
+        finally{busy=false;updateControls();}
+      }
+      const actions=element('div','cdx-update-actions');actions.append(check,download);
+      updates.append(summary,message,actions);editor.append(updates);
+    }
     const appearanceSpecs=[['fontSizePx','글자 크기 (px)',8,32],['borderRadiusPx','둥근 모서리 (px)',0,30],['horizontalPaddingPx','좌우 여백 (px)',0,30],['verticalPaddingPx','상하 여백 (px)',0,20],['gapPx','제목과의 간격 (px)',0,40]];
     for(const [key,labelText,min,max] of appearanceSpecs){
       const input=element('input');input.type='number';input.name=key;input.required=true;input.min=String(min);input.max=String(max);input.step='1';appearanceInputs[key]=input;field(appearanceFields,labelText,input);
@@ -304,7 +328,7 @@
         const next=await api.saveConfig({labels:state.draft.labels,appearance:state.draft.appearance},state.revision);
         acceptSnapshot(next);state.saving=false;closeSettings();document.getElementById('cdx-label-error')?.remove();
       }catch(e){state.message(e?.message||String(e),true);}
-      finally{state.saving=false;endWrite();if(settings===state){controls.forEach(control=>control.disabled=false);addLabel.disabled=state.draft.labels.length>=100;save.textContent='저장';dialog.removeAttribute('aria-busy');settingsChangedExternally();}}
+      finally{state.saving=false;endWrite();if(settings===state){controls.forEach(control=>control.disabled=false);addLabel.disabled=state.draft.labels.length>=100;state.updateControls?.();save.textContent='저장';dialog.removeAttribute('aria-busy');settingsChangedExternally();}}
     });
     // Native modal focus handling is supplemented for predictable Tab/Escape behavior.
     dialog.addEventListener('cancel',event=>{event.preventDefault();closeSettings();});

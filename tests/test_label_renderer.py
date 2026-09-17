@@ -317,6 +317,44 @@ class LabelRendererTests(unittest.TestCase):
         self.assertEqual(name.input_value(),'확인 대기')
         self.assertEqual(self.page.get_by_role('textbox',name='배경색 HEX',exact=True).input_value(),'#AA33CC')
 
+    def test_manual_update_check_download_and_restart_message_preserve_label_draft(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.updateCalls=[];
+            codexLabels.checkUpdate=async()=>{fixture.updateCalls.push('check');return {currentVersion:'0.2.0',latestVersion:'0.3.0',available:true};};
+            codexLabels.stageUpdate=async()=>{fixture.updateCalls.push('stage');return {currentVersion:'0.3.0',latestVersion:'0.3.0',available:false,pendingRestart:true};};
+        }''')
+        self.choose('라벨 설정…')
+        name=self.page.locator('#cdx-label-settings input[name="name"]')
+        name.fill('편집 중인 라벨')
+        self.page.get_by_text('Codex Labels 업데이트',exact=True).click()
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),[])
+        self.page.get_by_role('button',name='업데이트 확인',exact=True).click()
+        self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용',exact=True).click()
+        self.assertIn('적용 준비 완료',self.page.get_by_role('status').inner_text())
+        self.assertIn('다시 실행',self.page.get_by_role('status').inner_text())
+        self.assertEqual(name.input_value(),'편집 중인 라벨')
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['check','stage'])
+        self.assertFalse(self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용').is_visible())
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+
+    def test_update_error_retry_and_current_version(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            let calls=0;
+            codexLabels.checkUpdate=async()=>{if(++calls===1)throw Error('네트워크 연결 실패');return {currentVersion:'0.2.0',latestVersion:'0.1.0',available:false};};
+            codexLabels.stageUpdate=async()=>{throw Error('should not download');};
+        }''')
+        self.choose('라벨 설정…')
+        self.page.get_by_text('Codex Labels 업데이트',exact=True).click()
+        check=self.page.get_by_role('button',name='업데이트 확인',exact=True)
+        check.click()
+        self.assertIn('네트워크 연결 실패',self.page.get_by_role('status').inner_text())
+        self.assertTrue(check.is_enabled())
+        check.click()
+        self.assertIn('설치할 새 정식 버전이 없습니다',self.page.get_by_role('status').inner_text())
+        self.assertFalse(self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용').is_visible())
+
     def test_add_multiple_labels_then_cancel_does_not_save(self):
         self.start();self.choose('라벨 설정…')
         for _ in range(2): self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()

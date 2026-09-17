@@ -8,6 +8,8 @@ const {createStore} = require('./codex-labels-store.cjs');
 const {createSnapshotCache} = require('./codex-labels/snapshot-cache.cjs');
 const {createNotifications} = require('./codex-labels/notifications.cjs');
 const {configDirectory} = require('./codex-labels-location.json');
+const {createUpdater} = require('./codex-labels/updates.cjs');
+const updater = createUpdater(configDirectory);
 // Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
 // on the SAME Labels profile, without modifying CODEX_HOME or the original app.
 const defaultProfile = process.platform === 'win32' && process.env.LOCALAPPDATA
@@ -88,6 +90,8 @@ ipcMain.handle('codex-labels:report', (event, counts) => {
 ipcMain.handle('codex-labels:open-config', async event => {
   check(event); const result = await shell.openPath(store.configPath); if (result) throw Error(result); return true;
 });
+ipcMain.handle('codex-labels:update-check', event => { check(event); return updater.check(); });
+ipcMain.handle('codex-labels:update-stage', event => { check(event); return updater.stage(); });
 ipcMain.handle('codex-labels:notify-thread', (event, value) => { check(event); return notifications.notify(value); });
 ipcMain.handle('codex-labels:notification-status', event => { check(event); return notifications.status(); });
 ipcMain.handle('codex-labels:activation-ready', event => { check(event); ownsSharedStatus = true; notifications.rendererReady(event.sender); return true; });

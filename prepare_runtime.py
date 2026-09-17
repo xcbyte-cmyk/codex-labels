@@ -14,7 +14,7 @@ VERSION = 'OpenAI.Codex_26.911.7940.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
 SUPPORTED_APP_VERSION = '26.911.61220'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
@@ -166,7 +166,7 @@ def build_asar(source, target, config_directory, extra=None):
         temp.unlink(missing_ok=True)
 
 
-def validate_source(source):
+def source_version(source):
     archive = source/'resources/app.asar'
     if not archive.is_file() or not (source/'ChatGPT.exe').is_file():
         raise ValueError('Supported Codex installation not found. Use --source with its app directory.')
@@ -179,8 +179,15 @@ def validate_source(source):
         if base + offset + size > archive.stat().st_size:
             raise ValueError('Truncated package metadata')
         file.seek(base + offset)
-        if json.loads(file.read(size))['version'] != SUPPORTED_APP_VERSION:
-            raise ValueError('Unsupported app version. This patch supports ' + SUPPORTED_APP_VERSION + ' only.')
+        value = json.loads(file.read(size))['version']
+        if not isinstance(value, str) or not value:
+            raise ValueError('Invalid app version')
+        return value
+
+
+def validate_source(source):
+    if source_version(source) != SUPPORTED_APP_VERSION:
+        raise ValueError('Unsupported app version. This patch supports ' + SUPPORTED_APP_VERSION + ' only.')
 
 
 def prepare_config(directory):

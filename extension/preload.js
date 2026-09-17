@@ -13,6 +13,8 @@
     saveConfig: (config, revision) => ipcRenderer.invoke('codex-labels:save-config', config, revision),
     report: counts => ipcRenderer.invoke('codex-labels:report', counts),
     openConfig: () => ipcRenderer.invoke('codex-labels:open-config'),
+    checkUpdate: () => ipcRenderer.invoke('codex-labels:update-check'),
+    stageUpdate: () => ipcRenderer.invoke('codex-labels:update-stage'),
     notifyThread: value => ipcRenderer.invoke('codex-labels:notify-thread', value),
     notificationStatus: () => ipcRenderer.invoke('codex-labels:notification-status'),
     activationReady: () => ipcRenderer.invoke('codex-labels:activation-ready'),
