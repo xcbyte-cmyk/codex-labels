@@ -1,60 +1,114 @@
 'use strict';
-// Loaded once by early-bootstrap.js. Does not expose arbitrary file or shell access.
-const {app,ipcMain,shell,BrowserWindow} = require('electron');
+// Loaded by early-bootstrap.js BEFORE the upstream single-instance lock.
+const {app, ipcMain, shell, BrowserWindow, Notification} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const {fileURLToPath} = require('node:url');
 const {createStore} = require('./codex-labels-store.cjs');
+const {createSnapshotCache} = require('./codex-labels/snapshot-cache.cjs');
+const {createNotifications} = require('./codex-labels/notifications.cjs');
 const {configDirectory} = require('./codex-labels-location.json');
-const store = createStore(configDirectory);
-const statusPath = path.join(configDirectory,'runtime-status.json');
-function recordStatus(counts) {
-  const value={version:2,status:'active',settingsAvailable:true,updatedAt:new Date().toISOString(),processId:process.pid,configPath:store.configPath,userDataPath:app.getPath('userData'),...counts};
-  const temp=statusPath+'.tmp-'+process.pid;
-  try {fs.writeFileSync(temp,JSON.stringify(value,null,2));fs.renameSync(temp,statusPath);} catch(e){console.error('[codex-labels] status:',e.message);}
+// Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
+// on the SAME Labels profile, without modifying CODEX_HOME or the original app.
+const defaultProfile = process.platform === 'win32' && process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, 'CodexLabels', 'User Data') : app.getPath('userData');
+const profile = process.env.CODEX_ELECTRON_USER_DATA_PATH || defaultProfile;
+if (process.platform === 'win32') {
+  fs.mkdirSync(profile, {recursive: true});
+  process.env.CODEX_ELECTRON_USER_DATA_PATH = profile;
+  app.setPath('userData', profile);
 }
-const preloadPath = path.join(__dirname,'preload.js');
-const webRoot = path.resolve(__dirname,'../../webview');
+const store = createStore(configDirectory);
+const cache = createSnapshotCache(store, configDirectory);
+const statusPath = path.join(configDirectory, 'runtime-status.json');
+let status = {version: 3, status: 'starting', settingsAvailable: true,
+  processId: process.pid, executable: process.execPath, electronVersion: process.versions.electron || null,
+  configPath: store.configPath, userDataPath: app.getPath('userData'), rows: 0, badges: 0};
+let statusTimer, ownsSharedStatus = false;
+function flushStatus() {
+  clearTimeout(statusTimer); statusTimer = undefined;
+  const value = JSON.stringify({...status, updatedAt: new Date().toISOString()}, null, 2);
+  // Per-PID evidence distinguishes Labels instances; no notification content or IDs.
+  const destinations = [path.join(configDirectory, `runtime-status.${process.pid}.json`)];
+  // A short-lived secondary process must not overwrite the active process receipt.
+  if (ownsSharedStatus) destinations.push(statusPath);
+  for (const destination of destinations) {
+    const temp = `${destination}.tmp-${process.pid}`;
+    try { fs.writeFileSync(temp, value, {mode: 0o600}); fs.renameSync(temp, destination); }
+    catch { try { fs.unlinkSync(temp); } catch {} }
+  }
+}
+function recordStatus(patch) {
+  status = {...status, ...patch};
+  if (!statusTimer) { statusTimer = setTimeout(flushStatus, 100); statusTimer.unref?.(); }
+}
+const preloadPath = path.join(__dirname, 'preload.js');
+const webRoot = path.resolve(__dirname, '../../webview');
 function trustedUrl(value) {
   try {
     const u = new URL(value);
-    // Keep working when the packaged UI changes its client-side route.
     if (u.protocol === 'app:' && u.hostname === '-') return true;
-    return u.protocol === 'file:' && path.resolve(fileURLToPath(u)) === path.join(webRoot,'index.html');
+    return u.protocol === 'file:' && path.resolve(fileURLToPath(u)) === path.join(webRoot, 'index.html');
   } catch { return false; }
 }
 function trustedContent(contents) {
   return !contents.isDestroyed() && path.resolve(contents.getLastWebPreferences().preload || '.') === preloadPath && trustedUrl(contents.getURL());
 }
 function check(event) {
-  if (event.senderFrame !== event.sender.mainFrame || !trustedContent(event.sender)) throw Error('라벨 설정에 접근할 수 없는 화면입니다.');
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !trustedContent(event.sender)) {
+    throw Error('라벨 설정에 접근할 수 없는 화면입니다.');
+  }
 }
-ipcMain.handle('codex-labels:read',event=>{check(event);return store.snapshot();});
-ipcMain.handle('codex-labels:assign',(event,key,id)=>{check(event);return store.assign(key,id);});
-ipcMain.handle('codex-labels:save-config',(event,draft,expectedRevision)=>{check(event);return store.saveConfig(draft,expectedRevision);});
-ipcMain.handle('codex-labels:report',(event,counts)=>{
+const notifications = createNotifications({app, shell, Notification, profile, defaultProfile,
+  getWindows: () => BrowserWindow.getAllWindows(), trustedContent,
+  onStatus: notification => recordStatus({notification})});
+ipcMain.handle('codex-labels:read', event => { check(event); return cache.snapshot(); });
+ipcMain.handle('codex-labels:assign', (event, key, id) => {
+  check(event); const value = store.assign(key, id); cache.invalidate(); return value;
+});
+ipcMain.handle('codex-labels:save-config', (event, draft, revision) => {
+  check(event); const value = store.saveConfig(draft, revision); cache.invalidate(); return value;
+});
+ipcMain.handle('codex-labels:report', (event, counts) => {
   check(event);
-  if(!counts || !Number.isSafeInteger(counts.rows) || !Number.isSafeInteger(counts.badges) || counts.rows<0 || counts.badges<0 || counts.rows>10000 || counts.badges>10000) throw Error('Invalid label counts');
-  recordStatus({rows:counts.rows,badges:counts.badges});return true;
+  if (!counts || !Number.isSafeInteger(counts.rows) || !Number.isSafeInteger(counts.badges) ||
+      counts.rows < 0 || counts.badges < 0 || counts.rows > 10000 || counts.badges > 10000) throw Error('Invalid label counts');
+  ownsSharedStatus = true;
+  recordStatus({status: 'active', rows: counts.rows, badges: counts.badges}); return true;
 });
-ipcMain.handle('codex-labels:open-config',async event=>{
-  check(event); const result = await shell.openPath(store.configPath); if(result) throw Error(result);return true;
+ipcMain.handle('codex-labels:open-config', async event => {
+  check(event); const result = await shell.openPath(store.configPath); if (result) throw Error(result); return true;
 });
-const source = fs.readFileSync(path.join(__dirname,'codex-labels-renderer.js'),'utf8');
+ipcMain.handle('codex-labels:notify-thread', (event, value) => { check(event); return notifications.notify(value); });
+ipcMain.handle('codex-labels:notification-status', event => { check(event); return notifications.status(); });
+ipcMain.handle('codex-labels:activation-ready', event => { check(event); ownsSharedStatus = true; notifications.rendererReady(event.sender); return true; });
+ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
+  check(event);
+  return notifications.acknowledge(event.sender, eventId, result);
+});
+// Register capture handlers before the label renderer's stopImmediatePropagation.
+const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
+  fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8');
 const titledWindows = new WeakSet();
-app.on('web-contents-created',(_event,contents)=>{
-  contents.on('did-finish-load',()=>{
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) notifications.disconnected(contents);
+  });
+  contents.once('destroyed', () => notifications.disconnected(contents));
+  contents.on('did-finish-load', () => {
     if (!trustedContent(contents)) return;
     const window = BrowserWindow.fromWebContents(contents);
     if (window && !window.isDestroyed()) {
       window.setTitle('Codex Labels');
       if (!titledWindows.has(window)) {
         titledWindows.add(window);
-        window.on('page-title-updated',event=>{
+        window.on('page-title-updated', event => {
           if (trustedContent(contents) && !window.isDestroyed()) { event.preventDefault(); window.setTitle('Codex Labels'); }
         });
       }
     }
-    contents.executeJavaScript(source).catch(e=>console.error('[codex-labels] initialization failed:',e.message));
+    contents.executeJavaScript(source).catch(() => recordStatus({status: 'renderer-initialization-failed'}));
   });
 });
+app.once('will-quit', () => { notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
+recordStatus({notification: notifications.status()});

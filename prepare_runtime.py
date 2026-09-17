@@ -1,88 +1,157 @@
 """Build a separate Codex runtime. Never changes WindowsApps or its permissions."""
-import argparse, copy, hashlib, json, os, shutil, struct
+import argparse
+import copy
+import hashlib
+import json
+import os
 from pathlib import Path
+import shutil
+import struct
+import uuid
 
 ROOT = Path(__file__).resolve().parent
 VERSION = 'OpenAI.Codex_26.911.7940.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
 SUPPORTED_APP_VERSION = '26.911.61220'
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js')
+MAX_HEADER_BYTES = 64 * 1024 * 1024
+
 
 def entries(header, prefix=''):
     for name, item in header.get('files', {}).items():
+        if not name or name in ('.', '..') or '/' in name or '\\' in name:
+            raise ValueError('Invalid archive member name')
         key = prefix + name
         if 'files' in item:
             yield from entries(item, key + '/')
         else:
             yield key, item
 
+
 def read_index(file):
     file.seek(0)
-    _, size, _, length = struct.unpack('<IIII', file.read(16))
-    return json.loads(file.read(length)), 8 + size
+    prefix = file.read(16)
+    if len(prefix) != 16:
+        raise ValueError('Truncated archive header')
+    word, size, pickle_size, length = struct.unpack('<IIII', prefix)
+    if word != 4 or size < 8 or size > MAX_HEADER_BYTES or size % 4 or pickle_size != size - 4 or length > size - 8:
+        raise ValueError('Invalid archive header')
+    raw = file.read(length)
+    if len(raw) != length:
+        raise ValueError('Truncated archive header')
+    header = json.loads(raw)
+    if not isinstance(header, dict) or not isinstance(header.get('files'), dict):
+        raise ValueError('Invalid archive file index')
+    return header, 8 + size
+
 
 def digest(data, block=4194304):
-    return {'algorithm':'SHA256', 'hash':hashlib.sha256(data).hexdigest(), 'blockSize':block,
-            'blocks':[hashlib.sha256(data[i:i+block]).hexdigest() for i in range(0,len(data),block)]}
+    if not isinstance(block, int) or not 1 <= block <= MAX_HEADER_BYTES:
+        raise ValueError('Invalid integrity block size')
+    return {'algorithm': 'SHA256', 'hash': hashlib.sha256(data).hexdigest(), 'blockSize': block,
+            'blocks': [hashlib.sha256(data[i:i+block]).hexdigest() for i in range(0, len(data), block)]}
+
 
 def build_asar(source, target, config_directory, extra=None):
-    with source.open('rb') as src:
-        header, base = read_index(src)
-        original = dict(entries(copy.deepcopy(header)))
-        def read(name):
-            entry = original[name]
-            src.seek(base + int(entry['offset']))
-            return src.read(entry['size'])
-        if json.loads(read('package.json'))['version'] != SUPPORTED_APP_VERSION:
-            raise RuntimeError('Unsupported app version. Inspect the new version before patching.')
-        early = '.vite/build/early-bootstrap.js'; preload = '.vite/build/preload.js'
-        if MARKER in read(early) or MARKER in read(preload):
-            raise RuntimeError('The source is already patched; use the unmodified installed app.')
-        changed = {
-            early: MARKER+b'\nrequire("./codex-labels-main.cjs");\n'+read(early),
-            preload: read(preload)+b'\n'+MARKER+b'\n'+(ROOT/'extension/preload.js').read_bytes(),
-            '.vite/build/codex-labels-main.cjs': (ROOT/'extension/main.cjs').read_bytes(),
-            '.vite/build/codex-labels-store.cjs': (ROOT/'extension/store.cjs').read_bytes(),
-            '.vite/build/codex-labels-renderer.js': (ROOT/'extension/renderer.js').read_bytes(),
-            '.vite/build/codex-labels-location.json': json.dumps({'configDirectory':str(config_directory)},ensure_ascii=False).encode('utf-8')
-        }
-        if extra:
-            changed.update(extra)
-        for name,data in changed.items():
-            parts=name.split('/')
-            parent=header
-            for part in parts[:-1]:
-                parent=parent['files'][part]
-            item = parent['files'].setdefault(parts[-1], {})
-            item['size'] = len(data)
-            item['integrity'] = digest(data, item.get('integrity',{}).get('blockSize',4194304))
-        offset = 0
-        for name,item in entries(header):
-            if item.get('unpacked') or 'link' in item: continue
-            item['offset'] = str(offset); offset += item['size']
-        raw = json.dumps(header,ensure_ascii=False,separators=(',',':')).encode('utf-8')
-        padding = (-len(raw)) % 4
-        pickle_header = struct.pack('<II',4+len(raw)+padding,len(raw))+raw+b'\0'*padding
-        temp = target.with_suffix('.asar.tmp')
-        with temp.open('wb') as dst:
-            dst.write(struct.pack('<II',4,len(pickle_header)));dst.write(pickle_header)
-            for name,item in entries(header):
-                if item.get('unpacked') or 'link' in item: continue
-                if name in changed: dst.write(changed[name])
-                else:
-                    entry=original[name]; src.seek(base+int(entry['offset']))
-                    remaining=entry['size']
-                    while remaining:
-                        data=src.read(min(1048576,remaining))
-                        if not data: raise RuntimeError('Unexpected end of original archive')
-                        dst.write(data);remaining-=len(data)
+    source, target = Path(source), Path(target)
+    if source.resolve() == target.resolve():
+        raise ValueError('The source archive must never be the target')
+    temp = target.with_name(target.name + '.tmp-' + uuid.uuid4().hex)
+    try:
+        with source.open('rb') as src:
+            header, base = read_index(src)
+            original = dict(entries(copy.deepcopy(header)))
+            archive_size = source.stat().st_size
+
+            def read(name):
+                item = original[name]
+                if item.get('unpacked') or 'link' in item:
+                    raise ValueError('Required bootstrap file must be packed: ' + name)
+                offset, size = int(item['offset']), item['size']
+                if not isinstance(size, int) or size < 0 or offset < 0 or base + offset + size > archive_size:
+                    raise ValueError('Invalid archive member bounds: ' + name)
+                src.seek(base + offset)
+                data = src.read(size)
+                if len(data) != size:
+                    raise ValueError('Truncated archive member: ' + name)
+                return data
+
+            if json.loads(read('package.json'))['version'] != SUPPORTED_APP_VERSION:
+                raise RuntimeError('Unsupported app version. Inspect the new version before patching.')
+            early, preload = '.vite/build/early-bootstrap.js', '.vite/build/preload.js'
+            if MARKER in read(early) or MARKER in read(preload):
+                raise RuntimeError('The source is already patched; use the unmodified installed app.')
+            changed = {
+                early: MARKER + b'\nrequire("./codex-labels-main.cjs");\n' + read(early),
+                preload: read(preload) + b'\n' + MARKER + b'\n' + (ROOT/'extension/preload.js').read_bytes(),
+                '.vite/build/codex-labels-main.cjs': (ROOT/'extension/main.cjs').read_bytes(),
+                '.vite/build/codex-labels-store.cjs': (ROOT/'extension/store.cjs').read_bytes(),
+                '.vite/build/codex-labels-renderer.js': (ROOT/'extension/renderer.js').read_bytes(),
+                '.vite/build/codex-labels-location.json': json.dumps({'configDirectory': str(config_directory)}, ensure_ascii=False).encode('utf-8'),
+            }
+            for name in EXTRA_EXTENSION_FILES:
+                changed['.vite/build/codex-labels/' + name] = (ROOT/'extension'/name).read_bytes()
+            if extra:
+                changed.update(extra)
+            for name, data in changed.items():
+                parts = name.split('/')
+                if any(part in ('', '.', '..') or '\\' in part for part in parts) or not isinstance(data, bytes):
+                    raise ValueError('Invalid patch entry')
+                parent = header
+                for part in parts[:-1]:
+                    parent = parent['files'].setdefault(part, {'files': {}})
+                item = parent['files'].setdefault(parts[-1], {})
+                if item.get('unpacked') or 'link' in item:
+                    raise ValueError('Cannot replace unpacked/linked member: ' + name)
+                item['size'] = len(data)
+                item['integrity'] = digest(data, item.get('integrity', {}).get('blockSize', 4194304))
+            offset = 0
+            for name, item in entries(header):
+                if item.get('unpacked') or 'link' in item:
+                    continue
+                if not isinstance(item['size'], int) or item['size'] < 0:
+                    raise ValueError('Invalid member size')
+                item['offset'] = str(offset)
+                offset += item['size']
+            raw = json.dumps(header, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+            padding = (-len(raw)) % 4
+            payload = struct.pack('<II', 4 + len(raw) + padding, len(raw)) + raw + b'\0' * padding
+            with temp.open('xb') as dst:
+                dst.write(struct.pack('<II', 4, len(payload)))
+                dst.write(payload)
+                for name, item in entries(header):
+                    if item.get('unpacked') or 'link' in item:
+                        continue
+                    if name in changed:
+                        dst.write(changed[name])
+                    else:
+                        entry = original[name]
+                        start, remaining = int(entry['offset']), entry['size']
+                        if start < 0 or base + start + remaining > archive_size:
+                            raise ValueError('Invalid archive member bounds: ' + name)
+                        src.seek(base + start)
+                        while remaining:
+                            data = src.read(min(1048576, remaining))
+                            if not data:
+                                raise RuntimeError('Unexpected end of original archive')
+                            dst.write(data)
+                            remaining -= len(data)
+                dst.flush()
+                os.fsync(dst.fileno())
         with temp.open('rb') as check:
-            built,built_base=read_index(check); all_entries=dict(entries(built))
-            for name,data in changed.items():
-                item=all_entries[name];check.seek(built_base+int(item['offset']))
-                if check.read(item['size'])!=data: raise RuntimeError('Patch verification failed: '+name)
-        os.replace(temp,target)
+            built, built_base = read_index(check)
+            all_entries = dict(entries(built))
+            for name, data in changed.items():
+                item = all_entries[name]
+                check.seek(built_base + int(item['offset']))
+                if check.read(item['size']) != data:
+                    raise RuntimeError('Patch verification failed: ' + name)
+        os.replace(temp, target)
         return list(changed)
+    finally:
+        temp.unlink(missing_ok=True)
+
 
 def validate_source(source):
     archive = source/'resources/app.asar'
@@ -91,41 +160,76 @@ def validate_source(source):
     with archive.open('rb') as file:
         header, base = read_index(file)
         entry = dict(entries(header))['package.json']
-        file.seek(base + int(entry['offset']))
-        if json.loads(file.read(entry['size']))['version'] != SUPPORTED_APP_VERSION:
+        size, offset = entry['size'], int(entry['offset'])
+        if entry.get('unpacked') or 'link' in entry or not isinstance(size, int) or not 0 <= size <= MAX_HEADER_BYTES or offset < 0:
+            raise ValueError('Invalid package metadata')
+        if base + offset + size > archive.stat().st_size:
+            raise ValueError('Truncated package metadata')
+        file.seek(base + offset)
+        if json.loads(file.read(size))['version'] != SUPPORTED_APP_VERSION:
             raise ValueError('Unsupported app version. This patch supports ' + SUPPORTED_APP_VERSION + ' only.')
 
+
 def prepare_config(directory):
-    # Never replace the user's colors or assignments on subsequent attempts.
-    for filename, data in [
-        ('labels.json', (directory/'labels.example.json').read_bytes()),
-        ('assignments.json', b'{"schemaVersion":1,"assignments":{}}\n')
-    ]:
+    for filename, data in [('labels.json', (directory/'labels.example.json').read_bytes()),
+                           ('assignments.json', b'{"schemaVersion":1,"assignments":{}}\n')]:
         try:
             with (directory/filename).open('xb') as file:
                 file.write(data)
         except FileExistsError:
             pass
 
-def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source',type=Path,default=SOURCE,help='Installed Codex app directory (must contain ChatGPT.exe and resources/app.asar).')
-    args=parser.parse_args()
-    source=args.source.resolve()
-    target=ROOT/'runtime/app'
-    if target.exists():raise SystemExit('runtime/app already exists. Existing runtime was preserved.')
-    if source == target or source in target.parents:
-        raise SystemExit('The source installation must be outside the output runtime directory tree.')
-    try:validate_source(source)
-    except (ValueError,KeyError,struct.error,json.JSONDecodeError) as error:raise SystemExit(str(error)) from error
-    prepare_config(ROOT)
-    print('Copying installed runtime to an independent folder...',flush=True)
-    shutil.copytree(source,target)
-    files=build_asar(source/'resources/app.asar',target/'resources/app.asar',ROOT)
-    manifest={'version':2,'sourcePackage':source.parent.name,'sourceAsarSha256':hashlib.file_digest((source/'resources/app.asar').open('rb'),'sha256').hexdigest(),
-              'patchedAsarSha256':hashlib.file_digest((target/'resources/app.asar').open('rb'),'sha256').hexdigest(),
-              'changedArchiveFiles':files,'configPath':str(ROOT/'labels.json'),'originalInstallModified':False,'liveAppActivated':False,'launchMode':'side-by-side'}
-    (ROOT/'build-manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8')
-    print(json.dumps({'built':str(target),'patchedFiles':len(files),'originalInstallModified':False}),flush=True)
 
-if __name__=='__main__':main()
+def file_hash(file):
+    with file.open('rb') as handle:
+        return hashlib.file_digest(handle, 'sha256').hexdigest()
+
+
+def prepare_runtime(source, root=ROOT):
+    source, root = Path(source).resolve(), Path(root).resolve()
+    target = root/'runtime/app'
+    if target.exists():
+        raise ValueError('runtime/app already exists. Close Labels and move it to a backup directory before rebuilding.')
+    # Reject both nested directions to avoid recursive copying or copying the app into itself.
+    if source == target or source in target.parents or target in source.parents or root == source or source in root.parents:
+        raise ValueError('The source installation must be outside the output runtime directory tree.')
+    validate_source(source)
+    prepare_config(root)
+    source_hash = file_hash(source/'resources/app.asar')
+    stage = root/'runtime'/('.staging-' + uuid.uuid4().hex)
+    stage.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Do not copy the ASAR only to overwrite it immediately. Unpacked resources remain intact.
+        shutil.copytree(source, stage, ignore=lambda directory, names:
+                        ['app.asar'] if Path(directory) == source/'resources' and 'app.asar' in names else [])
+        files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root)
+        if file_hash(source/'resources/app.asar') != source_hash:
+            raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
+        manifest = {'version': 3, 'sourcePackage': source.parent.name, 'sourceAsarSha256': source_hash,
+                    'patchedAsarSha256': file_hash(stage/'resources/app.asar'), 'changedArchiveFiles': files,
+                    'configPath': str(root/'labels.json'), 'originalInstallModified': False,
+                    'liveAppActivated': False, 'launchMode': 'side-by-side', 'nativeNotificationClickVerified': False}
+        # Stage the manifest too; a failure before publication leaves no half-built runtime/app.
+        (stage/'codex-labels-build.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
+        stage.rename(target)
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+    (root/'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
+    return target, files
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, default=SOURCE,
+                        help='Installed Codex app directory containing ChatGPT.exe and resources/app.asar.')
+    args = parser.parse_args()
+    try:
+        target, files = prepare_runtime(args.source)
+    except (ValueError, KeyError, OSError, RuntimeError, struct.error) as error:
+        raise SystemExit(str(error)) from error
+    print(json.dumps({'built': str(target), 'patchedFiles': len(files), 'originalInstallModified': False}), flush=True)
+
+
+if __name__ == '__main__':
+    main()

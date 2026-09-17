@@ -1,4 +1,4 @@
-# Locally generated Codex application and user state
+# Local runtime, identity, diagnostics and user state must never be published.
 /runtime/
 /labels.json
 /labels.json.bak
@@ -6,7 +6,7 @@
 /labels.json.bak.tmp-*
 /assignments.json
 /assignments.json.tmp-*
-/runtime-status.json*
+/runtime-status*.json*
 /launch-status.json
 /build-manifest.json
 /profile/
@@ -27,3 +27,5 @@
 __pycache__/
 *.py[cod]
 node_modules/
+/test-results/
+/playwright-report/
