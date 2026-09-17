@@ -1,0 +1,37 @@
+# Windows PC별 설치와 업데이트
+
+배포 ZIP에는 라벨 준비 도구, 명령 파일, 안내 및 Python/PyInstaller 라이선스만 들어 있다. 공식 Codex, 개인 labels.json·assignments.json, 로그인 프로필과 로그는 포함하지 않는다. GitHub Actions에서 빌드한 ZIP과 SHA256SUMS.txt를 릴리즈에 게시한다.
+
+## 사용 순서
+
+1. Windows x64 PC에 공식 Codex를 설치한다. 현재 호환 대상은 Store 26.911.7940.0 / 내부 앱 26.911.61220이다. 다른 버전을 강제로 패치하지 않는다.
+2. ZIP을 계속 사용할 쓰기 가능한 폴더에 모두 푼다. `D:\Apps\CodexLabels` 같은 폴더를 권장한다. ZIP 안에서 실행하거나 준비된 runtime 폴더를 다른 PC에 복사하지 않는다.
+3. 설치.cmd를 실행한다. 현재 사용자에게 등록된 공식 설치 경로를 조회하고 원본을 수정하지 않는 앱 사본을 만든다. Python·Git·Node.js를 추가 설치할 필요가 없다.
+4. 바탕화면 Codex Labels 또는 실행.cmd를 사용한다. 계정 로그인은 해당 PC에서 한다.
+
+설치본은 약 2GB이며 설치 시 약 3GB 여유 공간이 필요하다. 업데이트 백업을 포함하면 더 많은 공간을 사용한다. 동일 폴더에서 설치를 동시에 진행할 수 없으며, 해당 실행본이 켜져 있으면 종료를 안내하고 중단한다. 앱을 강제로 종료하지 않는다.
+
+## 설정과 업데이트
+
+이름·색상은 설치 폴더의 labels.json, 작업별 상태는 assignments.json에 저장한다. 다른 PC로 색상 설정을 옮기려면 Labels를 닫고 labels.json만 복사한다. 작업별 할당은 실제 host/kind/thread ID와 프로젝트 경로에 묶여 있으므로 다른 PC의 작업에 자동으로 맞춰지지 않는다. 자동 동기화는 없다.
+
+새 ZIP을 기존 폴더에 풀고 설치.cmd를 다시 실행한다. labels.json과 assignments.json을 덮어쓰지 않는다. 이전 runtime/app은 runtime/app.backup-날짜-식별자로 남기고 새 사본이 실패하면 복원한다. 준비된 앱을 다른 폴더로 옮긴 경우에도 설치.cmd를 다시 실행한다. 런처는 빌드 당시 설정 경로와 패키지 지문이 맞지 않으면 실행을 막고 재준비를 안내한다.
+
+바탕화면에 다른 경로를 가리키는 같은 이름의 바로가기가 있으면 덮어쓰지 않는다. 이 경우 설치한 폴더의 실행.cmd를 사용할 수 있다. 기존 바로가기를 정리한 뒤 설치.cmd를 다시 실행하면 새 바로가기를 만들 수 있다.
+
+프로필은 `%LOCALAPPDATA%\CodexLabels\User Data`이다. 원본 Codex와 CODEX_HOME 및 작업 저장소는 공유한다. 다른 Labels 사본이 이 프로필을 쓰는 동안 새 사본이 잘못 활성화되지 않도록 런처에서 확인한다. 원본 Codex는 종료할 필요가 없다. 알림 프로토콜은 자동 등록하지 않는다.
+
+## 배포 패키지 빌드
+
+Windows x64의 Python 3.11 이상에서:
+
+```powershell
+python -m pip install -r packaging/requirements-build.txt
+python package_windows.py
+$env:CODEX_LABELS_PACKAGE_ZIP = (Get-ChildItem dist/Codex-Labels-*-windows-x64.zip).FullName
+python -m unittest discover -s tests -p test_windows_package.py -v
+```
+
+PyInstaller의 onefile 및 add-data 기능으로 Python 런타임과 필요한 확장 파일만 포함한다. 번들 내부 파일과 배포 EXE의 위치를 구분한다. [공식 패키징 옵션](https://pyinstaller.org/en/stable/usage.html), [공식 런타임 경로 안내](https://pyinstaller.org/en/stable/runtime-information.html)를 따른다.
+
+ZIP 파일 목록은 코드의 허용 목록으로 제한한다. CI는 실제로 빌드된 EXE를 한글 경로에 풀어 합성 Codex 설치본 준비·재설치·설정 보존·검사와 임시 바로가기 소유권 보호를 검증한다. 사용자의 바탕화면이나 실제 앱은 이 테스트에서 변경하지 않는다. 이 검증은 별도 물리 PC에서의 로그인·앱 사용 및 Windows 알림 클릭 검증을 대신하지 않는다.
