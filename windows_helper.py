@@ -173,7 +173,6 @@ def prepare(root, source):
         backup = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
         target.rename(backup)
     try:
-        print('공식 Codex를 복사하고 라벨 기능을 준비하고 있습니다. 잠시 기다려 주세요.', flush=True)
         builder.prepare_runtime(source, root)
         receipt = read_receipt(root)
         receipt.update(helperVersion=VERSION, helperPayloadSha256=payload_fingerprint())
@@ -260,6 +259,7 @@ def main():
                 'source': str(source), 'root': str(root), 'ready': ready, 'originalInstallModified': False}
         elif args.action == 'prepare':
             with preparation_lock(root):
+                print('공식 Codex를 확인하고 라벨 기능을 준비하고 있습니다. 잠시 기다려 주세요.', flush=True)
                 result = prepare(root, find_source(args.source))
                 if args.shortcut:
                     result['shortcut'] = create_shortcut(root)
