@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {createShortcutAdapter} = require('./windows-shortcuts.cjs');
-const {SCHEME, APP_ID, TOAST_CLSID, parseActivation, notificationInput,
+const {SCHEME, APP_ID, TOAST_CLSID, parseActivation, activationUri, notificationInput,
   toastXml, activationQueue, boundedDedupe} = require('./notification-core.cjs');
 
 // Dependency injection keeps tests off the real registry/notification system.
@@ -22,7 +22,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     toastClsidAvailable: typeof app.setToastActivatorCLSID === 'function',
     nativeShown: 0, nativeClicked: 0, managedShown: 0, activations: 0,
     lastResult: 'registration-needed'};
-  let disposed = false, restoreHook = () => {}, lastDelivery = null;
+  let disposed = false, restoreHook = () => {}, lastDelivery = null, toastIdentityApplied = false;
   const protocolArgs = [`--user-data-dir=${profile}`, '--'];
   const shortcut = platform === 'win32' ? path.join(app.getPath('appData'),
     'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Codex Labels.lnk') : null;
@@ -37,7 +37,13 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   function applyIdentity() {
     if (platform !== 'win32' || !state.enabled) return;
     app.setAppUserModelId(APP_ID);
-    if (state.toastClsidAvailable) app.setToastActivatorCLSID(TOAST_CLSID);
+    if (state.toastClsidAvailable && !toastIdentityApplied) {
+      app.setToastActivatorCLSID(TOAST_CLSID);
+      // Native Owl registers only the bare executable. COM cold starts must use
+      // the Labels profile before Chromium selects its single-instance target.
+      shortcuts.configureActivator({executable, profile, appId: APP_ID, clsid: TOAST_CLSID});
+      toastIdentityApplied = true;
+    }
   }
   function refreshIdentity() {
     if (platform !== 'win32') { update({lastResult: 'windows-only'}); return; }
@@ -73,7 +79,10 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     if (platform !== 'win32') return;
     if (app.isDefaultProtocolClient(SCHEME, executable, protocolArgs) &&
       !app.removeAsDefaultProtocolClient(SCHEME, executable, protocolArgs)) throw Error('프로토콜 해제에 실패했습니다.');
-    if (ownedShortcut()) io.unlinkSync(shortcut);
+    if (ownedShortcut()) {
+      shortcuts.removeActivator({executable, profile, appId: APP_ID, clsid: TOAST_CLSID});
+      io.unlinkSync(shortcut);
+    }
     restoreHook();
     update({enabled: false, protocolRegistered: false, nativeHook: false, lastResult: 'unregistered-restart-required'});
   }
@@ -205,7 +214,9 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     notice.on('close', event => {
       if (event?.reason === 'userCanceled' || event?.reason === 'applicationHidden') live.delete(n.eventId);
     });
-    // No competing instance click listener: the registered protocol is the sole route.
+    // Some compatible runtimes deliver a native click even for protocol XML.
+    // Both routes use the same eventId and the activation queue deduplicates them.
+    notice.on('click', () => activate(activationUri(n)));
     try { notice.show(); } catch (error) { live.delete(n.eventId); throw error; }
     while (live.size > 64) {
       const id = live.keys().next().value;
@@ -226,6 +237,9 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     if (!queue.pending && ['waiting-for-renderer', 'delivered-to-renderer'].includes(state.lastResult)) update({lastResult: 'activation-expired'});
   }, 5000);
   sweep.unref?.();
+  // Identity must be set before upstream bootstrap initializes native toasts.
+  // Waiting for whenReady is too late on the supported Owl runtime.
+  try { refreshIdentity(); installNativeHook(); } catch { update({lastResult: 'initialization-failed'}); }
   const initialized = app.whenReady().then(() => {
     if (disposed) return;
     try { refreshIdentity(); installNativeHook(); processArgs(argv); } catch { update({lastResult: 'initialization-failed'}); }

@@ -8,6 +8,8 @@
 
 지원 대상 Owl 런타임에는 `shell.writeShortcutLink`와 `readShortcutLink`가 없습니다. 해당 API가 없을 때는 숨겨진 PowerShell 프로세스에서 Windows Unicode Shell Link와 Property Store로 전용 시작 메뉴 바로가기를 저장하고 다시 읽습니다. 경로와 속성은 환경 변수 JSON으로 전달하며 실행 코드에 보간하지 않습니다. 네이티브 Electron에서 해당 API를 제공하면 기존 API를 우선 사용합니다. 등록 실패의 구체적인 이유는 로컬 `registrationError`에 기록됩니다.
 
+등록된 Labels 실행본은 upstream bootstrap 이전에 알림 ID와 CLSID를 적용합니다. Owl이 기록하는 COM `LocalServer32`의 실행 명령에도 동일한 `--user-data-dir`를 추가하고, Labels 전용 `AppUserModelId`를 등록합니다. 프로필 없는 COM 실행이 원본 앱의 단일 인스턴스로 합류하는 것을 방지합니다. 해제는 현재 실행본과 프로필이 일치하는 전용 등록만 제거합니다.
+
 프로토콜 등록 명령에는 고정 `--user-data-dir`와 옵션 종료자 `--`를 포함합니다. OS가 실행기를 거치지 않고 EXE를 시작해도 main 확장이 upstream 초기화와 단일 인스턴스 잠금보다 먼저 같은 Labels 프로필을 설정합니다. `CODEX_HOME`은 변경하지 않습니다.
 
 Windows가 `codex-labels://activate?...`를 `codex-labels://activate/?...`로 정규화하는 두 형태를 허용합니다. 다른 경로·호스트·프로토콜·추가 인자는 계속 거부합니다. 사이드바의 `local:<threadId>` 같은 표시 키에서는 kind 접두어를 제거한 실제 작업 ID로 알림을 생성하고, 이동 시에도 같은 방식으로 비교합니다.
@@ -28,6 +30,8 @@ Windows가 `codex-labels://activate?...`를 `codex-labels://activate/?...`로 �
 ```
 
 `Notification.handleActivation` 지원 여부는 진단에 기록하지만 해당 전역 콜백을 교체하지 않습니다. 원본 앱이 자체 콜백을 사용해도 빼앗지 않기 위해 새 알림은 전용 프로토콜 경로를 사용합니다. 따라서 내장 Electron 메이저 버전을 추정해 분기하지 않습니다.
+
+프로토콜 XML에도 인스턴스 `click`을 보내는 호환 런타임에서는 같은 활성화 URI를 처리하는 보조 클릭 핸들러를 사용합니다. 두 경로의 eventId는 같으며 큐가 중복 이동을 제거합니다.
 
 기존 main-process 알림에는 가능할 때 `Notification.prototype.show`를 감싸 표시 직전에 앱 ID를 적용하고 `click` 리스너를 앞에 추가합니다. 클래스 생성자를 교체하거나 기존 클릭 리스너를 제거하지 않습니다. 변경이 불가능한 런타임에서는 `native-hook-unavailable`로 기록하고 원래 동작을 유지합니다.
 

@@ -7,6 +7,27 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new()
 $request=$env:CODEX_LABELS_SHORTCUT_REQUEST | ConvertFrom-Json
+if ($request.operation -eq 'activator' -or $request.operation -eq 'remove-activator') {
+  $d=$request.details
+  $key='HKCU:\Software\Classes\CLSID\'+$d.clsid+'\LocalServer32'
+  $command='"'+$d.executable+'" "--user-data-dir='+$d.profile+'"'
+  $identity='HKCU:\Software\Classes\AppUserModelId\'+$d.appId
+  if ($request.operation -eq 'remove-activator') {
+    if ((Test-Path -LiteralPath $key) -and (Get-Item -LiteralPath $key).GetValue('') -eq $command) {
+      Remove-Item -LiteralPath ('HKCU:\Software\Classes\CLSID\'+$d.clsid) -Recurse
+      if ((Test-Path -LiteralPath $identity) -and (Get-Item -LiteralPath $identity).GetValue('CustomActivator') -eq $d.clsid) {
+        Remove-Item -LiteralPath $identity -Recurse
+      }
+    }
+    'true'; exit
+  }
+  New-Item -Path $key -Force | Out-Null
+  Set-Item -LiteralPath $key -Value $command
+  New-Item -Path $identity -Force | Out-Null
+  New-ItemProperty -LiteralPath $identity -Name DisplayName -Value 'Codex Labels' -PropertyType String -Force | Out-Null
+  New-ItemProperty -LiteralPath $identity -Name CustomActivator -Value $d.clsid -PropertyType String -Force | Out-Null
+  'true'; exit
+}
 if ($request.operation -eq 'read') {
   if (-not (Test-Path -LiteralPath $request.path)) { throw 'Shortcut does not exist' }
   $w=New-Object -ComObject WScript.Shell
@@ -73,6 +94,10 @@ function createShortcutAdapter(shell, {run = execFileSync, env = process.env} = 
     }).trim());
   }
   return {
+    configureActivator: typeof shell.writeShortcutLink === 'function' ? () => {}
+      : details => call({operation: 'activator', details}),
+    removeActivator: typeof shell.writeShortcutLink === 'function' ? () => {}
+      : details => call({operation: 'remove-activator', details}),
     read: typeof shell.readShortcutLink === 'function' ? file => shell.readShortcutLink(file)
       : file => call({operation: 'read', path: file}),
     write: typeof shell.writeShortcutLink === 'function' ? (file, operation, details) => shell.writeShortcutLink(file, operation, details)

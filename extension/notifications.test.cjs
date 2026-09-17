@@ -83,10 +83,12 @@ test('native hook keeps existing click callbacks and focuses a Labels-owned wind
   assert.equal(clicks, 1); assert.equal(h.service.status().nativeShown, 2);
   assert.equal(h.service.status().nativeClicked, 1); assert.equal(n.listenerCount('click'), 2);
 });
-test('managed notices use protocol XML without a competing instance-click route', async t => {
+test('managed protocol and native clicks share one deduplicated route', async t => {
   const h = await harness(t); h.service.register(); const result = h.service.notify({...thread, title: 'test'});
   assert.equal(result.accepted, true); assert.match(h.shown[0].options.toastXml, /activationType="protocol"/);
-  assert.equal(h.shown[0].listenerCount('click'), 0); assert.equal(h.service.status().managedShown, 1);
+  assert.equal(h.shown[0].listenerCount('click'), 1); assert.equal(h.service.status().managedShown, 1);
+  h.shown[0].emit('click'); h.shown[0].emit('click');
+  assert.equal(h.service.status().activations, 1);
 });
 test('explicit routing works without Notification.handleActivation', async t => {
   const h = await harness(t); h.service.register(); assert.equal(h.service.status().handleActivationAvailable, false);
