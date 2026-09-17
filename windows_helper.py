@@ -260,6 +260,12 @@ public static class LabelsShortcut {
 
 def launch(root):
     root = Path(root).resolve()
+    receipt = read_receipt(root)
+    # A newly installed helper carries a new extension payload. Reuse the
+    # guarded, preserving installer after the old Labels app has been closed.
+    if receipt and receipt.get('version') == 3 and receipt.get('helperPayloadSha256') != payload_fingerprint():
+        with preparation_lock(root):
+            prepare(root, find_source())
     exe = require_ready(root)
     if any(app != exe.resolve() for app in running_apps()):
         raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')

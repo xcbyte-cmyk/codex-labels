@@ -130,6 +130,28 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(kwargs['env']['CODEX_ELECTRON_USER_DATA_PATH'], str(profile))
         self.assertEqual(status['status'], 'launch-requested')
 
+    def test_next_launch_applies_new_payload_and_preserves_personal_files(self):
+        helper.prepare(self.root,self.source)
+        self.mark_old_payload()
+        config=(self.root/'labels.json').read_bytes()
+        assignments=(self.root/'assignments.json').read_bytes()
+        with patch.object(helper,'find_source',return_value=self.source), \
+                patch.object(helper,'profile_path',return_value=self.base/'profile'), \
+                patch.object(helper.subprocess,'Popen',return_value=Mock(pid=123)) as spawn:
+            helper.launch(self.root)
+        spawn.assert_called_once()
+        self.assertEqual((self.root/'labels.json').read_bytes(),config)
+        self.assertEqual((self.root/'assignments.json').read_bytes(),assignments)
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'],helper.payload_fingerprint())
+
+    def test_launch_never_updates_or_kills_a_running_old_runtime(self):
+        helper.prepare(self.root,self.source);self.mark_old_payload()
+        self.running.return_value=[(self.root/'runtime/app/ChatGPT.exe').resolve()]
+        with patch.object(helper,'find_source',return_value=self.source), patch.object(helper.subprocess,'Popen') as spawn:
+            with self.assertRaisesRegex(RuntimeError,'창을 닫은'): helper.launch(self.root)
+        spawn.assert_not_called()
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'],'old-payload')
+
     def test_other_labels_copy_cannot_silently_receive_new_launch(self):
         helper.prepare(self.root, self.source)
         self.running.return_value = [self.base/'another/runtime/app/ChatGPT.exe']

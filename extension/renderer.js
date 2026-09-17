@@ -36,6 +36,7 @@
     #cdx-label-settings button:hover{background:#3c4046}#cdx-label-settings button:focus-visible,#cdx-label-settings input:focus-visible,#cdx-label-settings textarea:focus-visible{outline:2px solid #7dd3fc;outline-offset:2px}
     #cdx-label-settings button:disabled{opacity:.5;cursor:default}#cdx-label-settings .cdx-settings-nav button{display:flex;align-items:center;gap:8px;width:100%;border-color:transparent;background:transparent;text-align:left;overflow-wrap:anywhere}
     #cdx-label-settings .cdx-settings-nav button[aria-pressed="true"]{border-color:#606873;background:#34383e}
+    #cdx-label-settings .cdx-settings-nav .cdx-settings-add{margin-top:8px;border:1px dashed #606873;color:#7dd3fc}
     #cdx-label-settings .cdx-settings-dot{width:10px;height:10px;flex:none;border-radius:3px}
     #cdx-label-settings .cdx-settings-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
     #cdx-label-settings .cdx-settings-field{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:12px;color:#cbd1d8}
@@ -215,6 +216,14 @@
     const editor=element('div'),fields=element('div','cdx-settings-fields');editor.append(fields);body.append(nav,editor);form.append(body);
     const state={dialog,draft:JSON.parse(JSON.stringify(fresh.config)),revision:fresh.configRevision,selected:fresh.config.labels[0]?.id,saving:false,conflict:false};settings=state;
     const inputs={},appearanceInputs={},navItems=new Map();
+    const addLabel=button('＋ 라벨 추가','cdx-settings-add',()=>{
+      if(state.saving||state.draft.labels.length>=100)return;
+      const id='label_'+Array.from(crypto.getRandomValues(new Uint8Array(16)),value=>value.toString(16).padStart(2,'0')).join('');
+      const orders=state.draft.labels.map(label=>label.order).filter(Number.isFinite);
+      state.draft.labels.push({id,name:'새 라벨',backgroundColor:'#7DD3FC',textColor:'#082F49',
+        order:Math.min(10000,Math.max(0,...orders)+10),enabled:true,description:''});
+      rebuildNav();selectLabel(id);inputs.name.focus();inputs.name.select();
+    });
     const current=()=>state.draft.labels.find(label=>label.id===state.selected);
     function field(container,labelText,input,wide=false){
       const label=element('label','cdx-settings-field'+(wide?' cdx-settings-wide':''));label.append(element('span',null,labelText),input);container.append(label);return label;
@@ -265,9 +274,12 @@
       for(const label of [...state.draft.labels].sort((a,b)=>a.order-b.order)){
         const select=button('',null,()=>selectLabel(label.id)),dot=element('span','cdx-settings-dot'),text=element('span');select.append(dot,text);select.setAttribute('aria-pressed','false');nav.append(select);navItems.set(label.id,{select,dot,text});
       }
+      addLabel.disabled=state.draft.labels.length>=100;
+      addLabel.title=addLabel.disabled?'라벨은 최대 100개까지 추가할 수 있습니다.':'새 라벨을 추가합니다. 저장을 눌러 적용하세요.';
+      nav.append(addLabel);
     }
     function selectLabel(id){
-      state.selected=id;const label=current();if(!label)return;
+      state.selected=id;const label=current();fields.hidden=!label;preview.hidden=!label;if(!label)return;
       for(const key of ['name','description','order','backgroundColor','textColor'])inputs[key].value=label[key];
       inputs.name.setCustomValidity(label.name.trim()?'':'라벨 이름을 입력해 주세요.');inputs.enabled.checked=label.enabled;
       for(const key of ['backgroundColor','textColor'])inputs[key+'Picker'].value=/^#[0-9a-f]{6}$/i.test(label[key])?label[key]:'#000000';
@@ -292,7 +304,7 @@
         const next=await api.saveConfig({labels:state.draft.labels,appearance:state.draft.appearance},state.revision);
         acceptSnapshot(next);state.saving=false;closeSettings();document.getElementById('cdx-label-error')?.remove();
       }catch(e){state.message(e?.message||String(e),true);}
-      finally{state.saving=false;endWrite();if(settings===state){controls.forEach(control=>control.disabled=false);save.textContent='저장';dialog.removeAttribute('aria-busy');settingsChangedExternally();}}
+      finally{state.saving=false;endWrite();if(settings===state){controls.forEach(control=>control.disabled=false);addLabel.disabled=state.draft.labels.length>=100;save.textContent='저장';dialog.removeAttribute('aria-busy');settingsChangedExternally();}}
     });
     // Native modal focus handling is supplemented for predictable Tab/Escape behavior.
     dialog.addEventListener('cancel',event=>{event.preventDefault();closeSettings();});

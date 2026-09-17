@@ -299,6 +299,43 @@ class LabelRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('fixture.reads.at(-1)'), 's1')
         self.assertEqual(self.page.evaluate('fixture.work()'), {'scans': {}, 'badgeWrites': []})
 
+    def test_add_label_save_reopen_and_assign(self):
+        self.start()
+        self.choose('라벨 설정…')
+        self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        name=self.page.locator('#cdx-label-settings input[name="name"]')
+        self.assertEqual(name.input_value(),'새 라벨')
+        name.fill('확인 대기')
+        self.page.get_by_role('textbox',name='배경색 HEX',exact=True).fill('#AA33CC')
+        self.page.get_by_role('button',name='저장',exact=True).click()
+        self.page.locator('#cdx-label-settings').wait_for(state='detached')
+        self.assertEqual(self.page.evaluate('fixture.data.config.labels.length'),6)
+        self.choose('확인 대기')
+        self.assertEqual(self.badge().inner_text(),'확인 대기')
+        self.choose('라벨 설정…')
+        self.page.get_by_role('button',name='확인 대기',exact=True).click()
+        self.assertEqual(name.input_value(),'확인 대기')
+        self.assertEqual(self.page.get_by_role('textbox',name='배경색 HEX',exact=True).input_value(),'#AA33CC')
+
+    def test_add_multiple_labels_then_cancel_does_not_save(self):
+        self.start();self.choose('라벨 설정…')
+        for _ in range(2): self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        self.assertEqual(self.page.locator('.cdx-settings-nav [aria-pressed]').count(),7)
+        self.page.get_by_role('button',name='취소',exact=True).click()
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+        self.choose('라벨 설정…')
+        self.assertEqual(self.page.locator('.cdx-settings-nav [aria-pressed]').count(),5)
+
+    def test_add_first_label_to_empty_config_and_limit_at_100(self):
+        self.start("addRow('first');fixture.data.config.labels=[];")
+        self.choose('라벨 설정…')
+        self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        self.assertEqual(self.page.locator('#cdx-label-settings input[name="name"]').input_value(),'새 라벨')
+        self.page.get_by_role('button',name='취소',exact=True).click()
+        self.page.evaluate('''()=>{const label={id:'first',name:'기본',backgroundColor:'#112233',textColor:'#FFFFFF',enabled:true,order:0,description:''};fixture.data.config.labels=Array.from({length:100},(_,i)=>({...label,id:'label_'+i}));fixture.advance(true);fixture.emit();}''')
+        self.settle();self.choose('라벨 설정…')
+        self.assertTrue(self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).is_disabled())
+
     def test_config_event_preserves_settings_draft_and_applies_to_all_badges(self):
         self.start("""addRow('first'); addRow('second'); fixture.assign({
             'thread:local:local:first': 'requested', 'thread:local:local:second': 'requested'}, false);""")
