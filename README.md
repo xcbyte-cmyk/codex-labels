@@ -12,11 +12,22 @@ Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 
 
 ## 지원 환경
 
-Windows Microsoft Store Codex **패키지 `26.911.7940.0` / 내부 앱 `26.911.61220`**, Python 3.11 이상이 필요합니다. Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
+Windows x64, Microsoft Store Codex **패키지 `26.911.7940.0` / 내부 앱 `26.911.61220`**을 지원합니다. 배포 ZIP은 Python·Git·Node.js 설치 없이 사용할 수 있습니다. 소스에서 준비하려면 Python 3.11 이상, Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
 
 앱 프로필은 `%LOCALAPPDATA%\CodexLabels\User Data`로 분리하지만 **CODEX_HOME과 작업 저장소는 원본과 공유**합니다. 별도 프로필은 작업 파일 전체의 샌드박스가 아닙니다.
 
-## 설치와 실행
+## 다른 Windows PC에서 간편 설치
+
+1. 해당 PC에 위 지원 버전의 공식 Codex를 설치합니다.
+2. [최신 릴리즈](https://github.com/xcbyte-cmyk/codex-labels/releases/latest)에서 `Codex-Labels-...-windows-x64.zip`을 받고, 계속 사용할 폴더에 압축을 풉니다.
+3. **설치.cmd**를 한 번 실행합니다. 설치본 자동 탐색, 버전 검사, 라벨 실행본 준비, 바탕화면 바로가기를 생성합니다.
+4. 이후에는 **바탕화면 Codex Labels** 또는 **실행.cmd**만 사용합니다.
+
+공식 앱 실행 파일이나 계정 정보를 배포 ZIP에 포함하지 않습니다. 각 PC의 설치본으로 사본을 만들며, 로그인도 각 PC에서 합니다. 관리자 권한이나 PowerShell 실행 정책 변경 없이 동작합니다. 약 3GB의 여유 공간이 필요합니다.
+
+업데이트할 때는 Labels만 닫고 새 ZIP을 같은 폴더에 풀어 **설치.cmd**를 다시 실행합니다. 개인 설정·할당을 유지하고 이전 실행본을 백업합니다. 설정 자동 동기화는 제공하지 않습니다. [다른 PC 설치와 업데이트 안내](docs/windows-install.md)를 참고하세요.
+
+## 소스에서 설치와 실행
 
 ```powershell
 git clone https://github.com/xcbyte-cmyk/codex-labels.git
@@ -80,7 +91,7 @@ python -m unittest discover -s tests -v
 python -m pip install playwright==1.57.0
 python -m playwright install chromium
 $env:CODEX_LABELS_BROWSER_TESTS = '1'
-python -m unittest discover -s tests -p test_notification_renderer.py -v
+python -m unittest discover -s tests -p 'test_*renderer.py' -v
 ```
 
 저장소 CI는 기존 저장 테스트, 새 알림/IPC/캐시 테스트, 합성 ASAR 빌드 테스트, Windows PowerShell 구문 검사와 별도 Chromium 테스트를 실행합니다. 테스트는 개인 데이터·Codex 바이너리·실제 Windows 알림 등록을 사용하지 않습니다. Chromium 테스트도 **합성 사이드바의 실제 브라우저 검증**이지 Windows 알림 센터 E2E 검증은 아닙니다.
