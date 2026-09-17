@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "appearance": {
+    "position": "before-title",
+    "style": "filled",
+    "fontSizePx": 11,
+    "borderRadiusPx": 5,
+    "horizontalPaddingPx": 7,
+    "verticalPaddingPx": 3,
+    "gapPx": 8
+  },
+  "behavior": {
+    "defaultLabelId": null,
+    "allowMultiple": false,
+    "autoCompleteOnAgentReply": false
+  },
+  "labels": [
+    {
+      "id": "requested",
+      "name": "요청",
+      "backgroundColor": "#7DD3FC",
+      "textColor": "#082F49",
+      "order": 10,
+      "enabled": true,
+      "description": "요청이 등록된 상태"
+    },
+    {
+      "id": "in_progress",
+      "name": "진행",
+      "backgroundColor": "#22C55E",
+      "textColor": "#052E16",
+      "order": 20,
+      "enabled": true,
+      "description": "업무를 진행하는 상태"
+    },
+    {
+      "id": "in_review",
+      "name": "검토",
+      "backgroundColor": "#FB923C",
+      "textColor": "#431407",
+      "order": 30,
+      "enabled": true,
+      "description": "결과 확인이나 검토가 필요한 상태"
+    },
+    {
+      "id": "completed",
+      "name": "완료",
+      "backgroundColor": "#1E3A8A",
+      "textColor": "#FFFFFF",
+      "order": 40,
+      "enabled": true,
+      "description": "사용자가 업무 완료를 확인한 상태"
+    },
+    {
+      "id": "on_hold",
+      "name": "보류",
+      "backgroundColor": "#6B7280",
+      "textColor": "#FFFFFF",
+      "order": 50,
+      "enabled": true,
+      "description": "진행을 보류한 상태"
+    }
+  ]
+}
