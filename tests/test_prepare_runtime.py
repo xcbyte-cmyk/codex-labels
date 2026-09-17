@@ -62,7 +62,7 @@ class BuildTests(unittest.TestCase):
         changed = builder.build_asar(self.archive, target, self.root/'settings')
         self.assertEqual(self.archive.read_bytes(), before)
         result = read_archive(target)
-        self.assertEqual(len(changed), 6)
+        self.assertEqual(len(changed), 6 + len(builder.EXTRA_EXTENSION_FILES))
         self.assertEqual(result['unchanged.txt'][0], self.files['unchanged.txt'])
         self.assertTrue(result['.vite/build/early-bootstrap.js'][0].startswith(builder.MARKER))
         self.assertIn(b'codex-labels:save-config', result['.vite/build/preload.js'][0])

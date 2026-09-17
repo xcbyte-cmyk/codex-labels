@@ -1,44 +1,22 @@
 # Codex Labels
 
-Windows용 Codex의 프로젝트·작업 제목 앞에 상태 라벨을 표시하는 사용자 지정 확장입니다. 라벨 이름과 색상은 앱 안의 설정창에서 바꿀 수 있습니다.
+Windows용 Codex의 프로젝트·작업 제목 앞에 상태 라벨을 표시하는 비공식 확장입니다. 이름과 색상은 앱 안에서 편집합니다. 원본 설치본 대신 **로컬 앱 사본**에 적용하며 Codex 바이너리를 배포하지 않습니다.
 
-An unofficial Windows customization that adds editable status badges to the Codex sidebar. It patches a local copy of an installed, supported Codex runtime; this repository does not distribute Codex binaries.
+An unofficial, version-gated Windows customization. This repository contains extension source and tests, not Codex binaries or user data.
 
-## 화면에서 사용하는 방법
+## 상태 라벨
 
-1. 아래 설치 절차를 마치고 **Codex Labels**를 실행합니다.
-2. 사이드바의 프로젝트·작업 제목 앞에 있는 **＋**를 클릭합니다.
-3. 상태를 선택하면 제목 앞에 색상 배지가 표시됩니다.
-4. 상태를 바꾸려면 배지를 다시 클릭합니다. **라벨 해제**로 표시를 없앨 수 있습니다.
-5. 이름이나 색상을 바꾸려면 같은 메뉴에서 **라벨 설정…**을 엽니다.
+Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 배지를 다시 누르면 상태를 변경하거나 해제할 수 있습니다. 같은 메뉴의 **라벨 설정…**에서 이름, 배경색, 글자색, 설명, 순서, 사용 여부, 글자 크기, 모서리와 여백을 수정합니다. 저장 전 미리보기와 취소, 외부 편집 충돌 차단, 직전 설정 백업을 제공합니다.
 
-설정창은 라벨 이름, 배경색, 글자색, 설명, 표시 순서, 사용 여부를 지원합니다. 글자 크기, 모서리 둥글기, 여백, 제목과의 간격도 미리보기를 보며 조절할 수 있습니다. **저장**하면 같은 라벨을 사용하는 항목들에 함께 반영되고, **취소**하면 편집 내용은 저장하지 않습니다.
-
-| 기본 상태 | 배경색 | 글자색 |
-| --- | --- | --- |
-| 요청 · 하늘색 | `#7DD3FC` | `#082F49` |
-| 진행 · 초록색 | `#22C55E` | `#052E16` |
-| 검토 · 주황색 | `#FB923C` | `#431407` |
-| 완료 · 남색 | `#1E3A8A` | `#FFFFFF` |
-| 보류 · 회색 | `#6B7280` | `#FFFFFF` |
-
-라벨은 사용자가 직접 지정합니다. 에이전트의 응답이 끝났다는 이유로 자동으로 완료 상태로 바뀌지 않습니다. 할당 정보는 제목 문자열 대신 작업·프로젝트 ID를 기준으로 저장합니다.
+기본값은 요청 `#7DD3FC`, 진행 `#22C55E`, 검토 `#FB923C`, 완료 `#1E3A8A`, 보류 `#6B7280`입니다. 연결은 제목이 아닌 작업·프로젝트 ID로 유지합니다. **알림 발생이나 AI 응답 종료가 업무 라벨을 자동으로 완료로 바꾸지는 않습니다.**
 
 ## 지원 환경
 
-- Windows에 설치된 Microsoft Store Codex **패키지 버전 `26.911.7940.0`**
-- 해당 앱의 내부 버전 **`26.911.61220`**
-- **Python 3.11 이상**: 설치된 앱의 런타임을 복사하고 패치하는 데 필요합니다.
-- Git: 아래 저장소 복제 명령에 필요합니다.
-- **Node.js 22 이상**: 확장 저장소 테스트를 실행할 때만 필요합니다.
+Windows Microsoft Store Codex **패키지 `26.911.7940.0` / 내부 앱 `26.911.61220`**, Python 3.11 이상이 필요합니다. Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
 
-이 저장소는 위 버전을 대상으로 작성되었습니다. 준비 스크립트는 지원하지 않는 버전을 거부합니다. 이후 Codex 버전에서도 작동한다는 의미는 아닙니다.
-
-사본은 설치된 앱의 **Owl 런타임**을 사용합니다. 별도로 설치한 일반 Electron으로 실행하는 구성은 지원하지 않습니다.
+앱 프로필은 `%LOCALAPPDATA%\CodexLabels\User Data`로 분리하지만 **CODEX_HOME과 작업 저장소는 원본과 공유**합니다. 별도 프로필은 작업 파일 전체의 샌드박스가 아닙니다.
 
 ## 설치와 실행
-
-PowerShell에서 다음을 실행합니다.
 
 ```powershell
 git clone https://github.com/xcbyte-cmyk/codex-labels.git
@@ -47,91 +25,82 @@ python prepare_runtime.py
 powershell -NoProfile -File .\launch.ps1
 ```
 
-`prepare_runtime.py`는 지원되는 설치본을 찾고 다음 파일을 준비합니다.
+설치 경로를 지정하려면 `python prepare_runtime.py --source 'C:\path\to\Codex\app'`을 사용합니다. `--source`는 버전 검사를 우회하지 않습니다.
 
-- `runtime/app/`: 설치된 Codex를 복사한 뒤 확장을 적용한 실행용 사본
-- `labels.json`: `labels.example.json`에서 생성하는 개인 라벨 설정
-- `assignments.json`: 처음에는 비어 있는 프로젝트·작업별 라벨 할당 정보
+준비 스크립트는 `runtime/app` 사본을 스테이징 디렉터리에서 완성·검증한 뒤 게시합니다. 원본 ASAR를 불필요하게 한 번 더 복사하지 않으며, 실패한 스테이징 디렉터리는 정리합니다. 원본 설치 경로와 권한은 변경하지 않습니다.
 
-자동 탐색 대신 설치본의 `app` 디렉터리를 지정할 수도 있습니다.
+원본 Codex는 계속 실행해도 됩니다. 여러 저장소 사본은 동일한 Labels 프로필을 쓰므로 **다른 사본으로 이동할 때는 기존 Labels 창부터 종료**하세요.
 
-```powershell
-python prepare_runtime.py --source 'C:\path\to\Codex\app'
-```
+조직의 PowerShell 정책을 따르세요. 실행 정책을 영구적으로 변경하는 설치 명령은 제공하지 않습니다.
 
-`--source`는 버전 검사를 우회하는 옵션이 아닙니다. 지원되는 Codex 설치본을 지정해야 합니다.
+## Windows 알림 연결 — 실험적
 
-준비가 끝난 뒤에는 저장소 디렉터리에서 실행 명령만 다시 사용하면 됩니다.
+목표는 **알림 클릭 → Codex Labels 활성화 → 알림의 작업 열기 요청**입니다. 등록은 명시적으로 수행합니다.
 
 ```powershell
-powershell -NoProfile -File .\launch.ps1
+powershell -NoProfile -File .\launch.ps1 -RegisterNotifications
 ```
 
-원본 Codex를 종료할 필요가 없으며, 준비·실행 과정에서 원본 설치 파일을 수정하지 않습니다.
+Labels 전용 시작 메뉴 바로가기, AUMID와 `codex-labels://` 프로토콜을 등록합니다. **원본 `codex://` 연결은 변경하지 않습니다.** 등록 후 작업의 배지 메뉴에서 **알림 연결 테스트**를 실행할 수 있습니다. 실제 결과는 `runtime-status.json`의 `notification`에서 확인합니다.
 
-Windows 실행 정책 때문에 직접 작성된 로컬 스크립트가 차단된다면 내용을 확인한 뒤, 해당 실행 프로세스에만 정책을 적용할 수 있습니다. 시스템의 실행 정책 설정은 바꾸지 않습니다. 조직에서 강제한 정책은 관리자 안내를 따르세요.
+중요한 적용 범위:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\launch.ps1
-```
+- `notifyThread`에 작업 ID를 명시한 새 알림과 테스트 알림: 전용 프로토콜, 시작 시 인자 수신, 실행 중 두 번째 인스턴스 전달, renderer-ready 대기, host/kind/thread 전체 일치로 연결합니다.
+- Labels 프로세스의 기존 main-process `Notification`: 지원되는 경우 표시 직전에 Labels 앱 ID를 적용하고 클릭 시 Labels 창을 복원합니다. **기존 작업 열기 콜백을 보존하며, 그 콜백에서 감춰진 작업 ID를 추측하거나 자동 추출하지 않습니다.**
+- 원본 Codex에서 생성한 알림, 이미 알림 센터에 남아 있는 원본 알림, renderer의 Web Notification은 가로채지 않습니다.
 
-여러 복제 폴더는 같은 Codex Labels 앱 프로필을 사용합니다. 다른 복제 폴더로 전환할 때는 기존 **Codex Labels** 창을 먼저 종료하세요. 원본 Codex 창은 계속 열어 두어도 됩니다.
+**현재 패치는 실제 사용자 Windows에서의 토스트 클릭을 검증한 결과가 아닙니다.** 특히 기존 Codex 알림의 콜백이 외부 `codex://` 링크를 여는 경우까지 고쳤다고 주장하지 않습니다. 작업이 가상화·접힘 등으로 DOM에 없으면 다른 작업을 열지 않고 안내합니다. 내부 Codex 라우터를 추측해 호출하지 않습니다.
 
-## 설정 파일과 데이터 범위
+구조, 연동 API, 제한, 등록 해제와 실제 기기 점검 절차는 [알림 구현 문서](docs/notifications.md)를 참조하세요.
 
-라벨 관련 파일은 복제한 저장소 디렉터리에 모입니다.
+## 데이터와 진단
 
-| 파일 | 역할 |
-| --- | --- |
-| `labels.example.json` | 공개 저장소에 포함된 기본 설정 |
-| `labels.json` | 사용자가 수정하는 이름·색상·모양 설정 |
-| `labels.json.bak` | 설정창에서 저장하기 직전의 설정 백업 |
-| `assignments.json` | 프로젝트·작업 ID와 라벨 ID의 연결 |
+`labels.example.json`만 공개 기본값입니다. 개인 `labels.json`, `labels.json.bak`, `assignments.json`, 앱 프로필, 로그와 바이너리는 Git에서 제외합니다. 설정 ID를 유지하면 이름과 색상을 바꿔도 기존 할당을 유지합니다.
 
-설정창에서 저장할 때 라벨 ID는 유지됩니다. 따라서 이름이나 색상을 바꿔도 기존 할당을 계속 사용할 수 있습니다. JSON을 직접 편집할 때도 기존 라벨의 `id`를 유지하세요. 배경색과 글자색은 `#RRGGBB` 형식입니다.
+`runtime-status.json`과 `runtime-status.<PID>.json`에는 실행 파일, PID, 앱 프로필, 내장 Electron 버전, 알림 기능 지원 여부와 처리 결과를 기록합니다. 알림 제목·본문·작업 ID는 진단 상태에 기록하지 않습니다. 진단에는 개인 경로가 있을 수 있으므로 원문을 공개 업로드하지 마세요.
 
-설정창을 열어 둔 사이 다른 창이나 파일에서 설정을 바꾸면, 저장 전에 충돌을 알리고 최신 설정을 다시 불러오도록 합니다. 잘못된 설정을 덮어쓰는 대신 오류를 표시하며, 이미 읽어 둔 유효한 설정은 유지합니다.
+`launch-status.json`은 실행 요청이지 성공 증거가 아닙니다. 기존 Labels 창으로 전달된 경우 요청 프로세스와 실제 활성 프로세스의 PID가 다를 수 있습니다. `notification.lastResult = navigation-requested`도 내부 라우터의 최종 화면을 검증했다는 의미는 아닙니다.
 
-앱의 사용자 데이터 디렉터리는 `%LOCALAPPDATA%\CodexLabels\User Data`로 분리합니다. **기존 `CODEX_HOME`과 작업 저장소는 공유합니다.** 별도 앱 프로필은 전체 작업 데이터의 샌드박스가 아니며, 이 창에서 수행하는 작업도 기존 파일과 작업 데이터에 영향을 줄 수 있습니다.
+## 최적화와 안전장치
 
-## 구현 구조
+설정은 main process의 공유 캐시로 읽습니다. 디렉터리 감시로 원자적 파일 교체를 감지하며, 누락된 이벤트는 최대 5초 캐시 수명과 다음 읽기로 보완합니다. 저장과 할당은 기존 저장 계층에서 최신 파일을 검증합니다. 진단 쓰기는 100ms 단위로 합칩니다.
 
-```text
-설치된 Codex
-    └─ 로컬 복사 → runtime/app
-                     └─ main / preload / renderer 확장
-                              ├─ 사이드바 배지와 상태 메뉴
-                              ├─ 라벨 설정창
-                              └─ labels.json + assignments.json
-```
-
-`extension/main.cjs`는 허용된 앱 화면에만 설정 읽기·저장 기능을 연결합니다. `extension/preload.js`는 필요한 기능만 화면에 전달하고, `extension/renderer.js`는 실제 사이드바 항목에 배지·메뉴·설정창을 추가합니다. `extension/store.cjs`가 설정 검증, 저장 전 충돌 확인, 백업과 파일 저장을 담당합니다.
-
-Codex의 Rust app-server를 빌드하거나 SQLite 스키마를 변경하지 않습니다. 화면 요소를 탐색해 배지를 추가하므로 Codex의 사이드바 구조가 바뀌면 확장 수정이 필요할 수 있습니다.
+알림 클릭은 중복을 제거하고 마지막 클릭을 우선합니다. 다른 창·오래된 요청의 응답은 거부합니다. 알림 생성은 분당 20회, 유지 객체는 64개로 제한합니다. 작업 탐색 observer는 클릭 대기 중에만 설치하고 성공·실패·화면 종료 시 해제합니다. IPC는 기존 허용 앱의 최상위 프레임만 수신합니다. 외부 링크로 임의 명령, 승인, 파일 접근을 실행하지 않습니다.
 
 ## 테스트
 
-저장소 루트에서 실행합니다.
-
 ```powershell
-node --test extension/store.test.cjs
+node --test
 python -m unittest discover -s tests -v
 ```
 
-Python의 5개 테스트는 합성 archive로 패치 무결성, 원본 보존, 버전 거부와 개인 설정 보존을 확인합니다. 실제 Codex 바이너리는 테스트에 포함하지 않습니다.
+선택적 실제 Chromium 테스트:
 
-저장 계층의 17개 테스트는 라벨 할당 유지, 잘못된 입력 거부, 설정 저장과 백업, 외부 수정 충돌 처리를 검증합니다. 구현 과정에서는 브라우저의 사이드바 테스트 화면에서 설정창의 저장·취소·새로고침 유지와 충돌 표시를 확인했고, 위 지원 버전의 실제 앱 사본에서도 확장 기동과 사이드바 배지 생성을 확인했습니다.
+```powershell
+python -m pip install playwright==1.57.0
+python -m playwright install chromium
+$env:CODEX_LABELS_BROWSER_TESTS = '1'
+python -m unittest discover -s tests -p test_notification_renderer.py -v
+```
 
-이 검증은 명시된 버전과 환경의 결과입니다. 모든 Windows 환경이나 향후 Codex 릴리스에 대한 호환성 보장은 아닙니다.
+저장소 CI는 기존 저장 테스트, 새 알림/IPC/캐시 테스트, 합성 ASAR 빌드 테스트, Windows PowerShell 구문 검사와 별도 Chromium 테스트를 실행합니다. 테스트는 개인 데이터·Codex 바이너리·실제 Windows 알림 등록을 사용하지 않습니다. Chromium 테스트도 **합성 사이드바의 실제 브라우저 검증**이지 Windows 알림 센터 E2E 검증은 아닙니다.
 
-## 업데이트와 제거
+## 소스 업데이트 후 재빌드
 
-Codex가 업데이트되면 이 저장소의 지원 버전을 먼저 확인하세요. 지원되지 않는 설치본에 기존 패치를 강제로 적용하지 마세요.
+`git pull`만으로 기존 `runtime/app` 안의 코드가 바뀌지 않습니다. Labels 창만 종료하고 다음을 실행하세요. 원본 Codex는 종료할 필요가 없습니다.
 
-사용을 중단하려면 **Codex Labels 창을 닫고 원본 Codex를 실행**하면 됩니다. 파일까지 제거하려면 필요한 `labels.json`과 `assignments.json`을 보관한 뒤 로컬 복제 디렉터리와 `%LOCALAPPDATA%\CodexLabels\User Data`를 삭제할 수 있습니다. 기존 `CODEX_HOME`이나 작업 저장소는 제거 대상이 아닙니다.
+```powershell
+Rename-Item .\runtime\app ('app.backup-' + (Get-Date -Format yyyyMMdd-HHmmss))
+python prepare_runtime.py
+powershell -NoProfile -File .\launch.ps1 -RegisterNotifications
+```
 
-## 공개 저장소에 포함되는 범위
+기존 개인 설정과 할당은 덮어쓰지 않습니다. 실행기는 이전 빌드의 영수증 없는 런타임을 거부하여 새 기능이 적용된 것처럼 오인하지 않도록 합니다. Codex 자체가 업데이트되었다면 지원 버전을 먼저 확인하세요.
 
-이 저장소에는 직접 작성한 확장 코드, 준비·실행 스크립트, 기본 설정 예제와 테스트만 포함합니다. Codex 실행 파일·리소스 사본, 개인 설정, 로그인 정보, 실행 로그, 실제 라벨 할당 정보는 포함하지 않습니다.
+## 제거
 
-OpenAI의 공식 기능이나 공식 배포판이 아닙니다. Codex 앱 자체는 사용자가 별도로 설치해야 합니다.
+알림 연결을 해제하려면 해당 사본에서 `powershell -NoProfile -File .\launch.ps1 -UnregisterNotifications`를 실행하고 Labels를 종료합니다. 자신이 소유한 바로가기와 전용 프로토콜만 해제합니다. 다른 사본의 연결은 지우지 않습니다.
+
+필요한 개인 설정을 백업한 뒤 저장소 사본과 Labels 전용 프로필을 제거할 수 있습니다. **CODEX_HOME이나 기존 작업 저장소는 제거 대상이 아닙니다.** 원본 Codex를 그대로 사용하면 됩니다.
+
+OpenAI 공식 기능이나 공식 배포판이 아닙니다.
