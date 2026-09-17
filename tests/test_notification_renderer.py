@@ -70,10 +70,10 @@ class NotificationRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('events.ready'), 1)
 
     def test_full_identity_selects_remote_row_not_same_id_on_local(self):
-        self.page.evaluate("() => { addRow('task'); addRow('task', 'remote-host', 'remote'); }")
-        self.activate(host='remote-host', kind='remote')
+        self.page.evaluate("() => { addRow('task'); addRow('task', 'remote-ssh-discovered:qa-runner', 'remote'); }")
+        self.activate(host='remote-ssh-discovered:qa-runner', kind='remote')
         self.page.wait_for_function('events.acks.length === 1')
-        self.assertEqual(self.page.evaluate('events.clicked'), [['task', 'remote-host', 'remote']])
+        self.assertEqual(self.page.evaluate('events.clicked'), [['task', 'remote-ssh-discovered:qa-runner', 'remote']])
         self.assertEqual(self.page.evaluate('events.acks'), [['e1', 'navigation-requested']])
 
     def test_late_mounted_row_is_navigated_once(self):
@@ -102,12 +102,12 @@ class NotificationRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('events.acks[0][0]'), 'e2')
 
     def test_menu_test_button_coexists_with_upstream_capture_handler(self):
-        self.page.evaluate("addRow('task', 'remote-host', 'remote')")
+        self.page.evaluate("addRow('task', 'remote-ssh-discovered:qa-runner', 'remote')")
         self.page.locator('.cdx-label').click()
         self.page.get_by_role('menuitem', name='알림 연결 테스트').click()
         self.page.wait_for_function('events.notices.length === 1')
         notice = self.page.evaluate('events.notices[0]')
-        self.assertEqual((notice['threadId'], notice['hostId'], notice['kind']), ('task', 'remote-host', 'remote'))
+        self.assertEqual((notice['threadId'], notice['hostId'], notice['kind']), ('task', 'remote-ssh-discovered:qa-runner', 'remote'))
         self.assertEqual(self.page.evaluate('events.clicked'), [])
 
     def test_keyboard_menu_also_exposes_test_action(self):

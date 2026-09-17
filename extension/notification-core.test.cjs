@@ -9,6 +9,41 @@ test('activation round-trips the entire identity, not just a title or thread id'
   assert.equal(route({threadId: 't'}, () => 'e').hostId, 'local');
   assert.ok(Object.isFrozen(route(base)));
 });
+
+test('actual Codex remote host formats survive notification and URI round trips', () => {
+  const hosts = ['local', 'custom-host-1', 'remote-ssh-discovered:qa-runner',
+    'remote-control:workspace-42', 'remote-wsl:Ubuntu-24.04',
+    'remote-ssh-discovered:' + encodeURIComponent('연구 서버 (QA)'),
+    'remote-control:' + encodeURIComponent('user@lab:2222'),
+    'remote-wsl:' + encodeURIComponent('Ubuntu 개발')];
+  for (const hostId of hosts) {
+    const expected = {...base, hostId};
+    const input = notificationInput({...expected, title: 'remote test'});
+    assert.equal(input.hostId, hostId);
+    const uri = activationUri(input);
+    assert.deepEqual(parseActivation(uri), expected);
+    assert.ok(toastXml(input, true).includes('activationType="protocol"'));
+  }
+});
+
+test('remote host validation rejects malformed escapes, control bytes and unsupported prefixes', () => {
+  for (const hostId of ['', 'remote-ssh-discovered:', 'unknown:host', 'https://host',
+    'remote-control:raw:colon', 'remote-wsl:raw space', 'remote-wsl:raw\\path',
+    'remote-wsl:bad%', 'remote-wsl:bad%GG', 'remote-wsl:%C0%AF', 'remote-wsl:%ED%A0%80',
+    'remote-wsl:%00', 'remote-wsl:%0A', 'remote-wsl:%7F', 'remote-wsl:host\n', 'a'.repeat(257)]) {
+    assert.throws(() => notificationInput({...base, hostId, title: 'test'}), undefined, hostId);
+    const uri = 'codex-labels://activate?' + new URLSearchParams({v: '1', ...base, hostId});
+    assert.throws(() => parseActivation(uri), undefined, hostId);
+  }
+});
+
+test('host namespace support does not relax thread, event or kind validation', () => {
+  for (const name of ['threadId', 'eventId', 'kind']) {
+    for (const value of ['remote-wsl:Ubuntu', 'encoded%20value']) {
+      assert.throws(() => route({...base, [name]: value}));
+    }
+  }
+});
 test('arbitrary URLs, credentials, paths, fragments and oversized payloads are rejected', () => {
   const good = activationUri(base);
   for (const value of [null, {}, 'codex://thread/t', 'https://example.com', 'javascript:alert(1)',

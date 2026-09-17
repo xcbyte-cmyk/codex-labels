@@ -18,15 +18,16 @@ class NotificationBuildTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='labels-build-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.project = self.root/'project'
+        # Exercise UTF-8 manifest paths even when the user/temp path is ASCII-only.
+        self.project = self.root/'라벨 프로젝트'
         extension = self.project/'extension'
         extension.mkdir(parents=True)
         # These tests exercise new modules + packaging, not the legacy label UI/store.
         for name in ['main.cjs', 'preload.js', *builder.EXTRA_EXTENSION_FILES]:
             shutil.copyfile(SOURCE_ROOT/'extension'/name, extension/name)
-        (extension/'renderer.js').write_text('/* synthetic legacy renderer */')
-        (extension/'store.cjs').write_text('/* synthetic legacy store */')
-        (self.project/'labels.example.json').write_text('{"synthetic":true}')
+        (extension/'renderer.js').write_text('/* synthetic legacy renderer */', encoding='utf-8')
+        (extension/'store.cjs').write_text('/* synthetic legacy store */', encoding='utf-8')
+        (self.project/'labels.example.json').write_text('{"synthetic":true}', encoding='utf-8')
         root_patch = patch.object(builder, 'ROOT', self.project)
         root_patch.start()
         self.addCleanup(root_patch.stop)
@@ -77,8 +78,11 @@ class NotificationBuildTests(unittest.TestCase):
         target, names = builder.prepare_runtime(self.source, self.project)
         self.assertEqual(len(names), 10)
         self.assertTrue((target/'resources/app.asar').is_file())
-        receipt = json.loads((target/'codex-labels-build.json').read_text())
+        receipt = json.loads((target/'codex-labels-build.json').read_text(encoding='utf-8'))
         self.assertEqual(receipt['version'], 3)
+        self.assertEqual(receipt['configPath'], str(self.project.resolve()/'labels.json'))
+        published = json.loads((self.project/'build-manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual(published, receipt)
         self.assertFalse(receipt['nativeNotificationClickVerified'])
         self.assertFalse(receipt['originalInstallModified'])
         self.assertEqual(before, self.archive.read_bytes())
@@ -94,11 +98,11 @@ class NotificationBuildTests(unittest.TestCase):
     def test_existing_runtime_and_user_settings_are_not_overwritten(self):
         target, _ = builder.prepare_runtime(self.source, self.project)
         before = (target/'resources/app.asar').read_bytes()
-        (self.project/'labels.json').write_text('preserve-custom')
+        (self.project/'labels.json').write_text('preserve-custom', encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'already exists'):
             builder.prepare_runtime(self.source, self.project)
         self.assertEqual((target/'resources/app.asar').read_bytes(), before)
-        self.assertEqual((self.project/'labels.json').read_text(), 'preserve-custom')
+        self.assertEqual((self.project/'labels.json').read_text(encoding='utf-8'), 'preserve-custom')
 
     def test_source_inside_target_is_rejected(self):
         with self.assertRaises(ValueError):

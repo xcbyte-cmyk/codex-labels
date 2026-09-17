@@ -8,12 +8,24 @@ const MAX_URI_LENGTH = 2048;
 const ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,255}$/;
 const ROUTE_FIELDS = ['threadId', 'hostId', 'kind', 'eventId'];
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+function validHostId(value) {
+  if (typeof value !== 'string' || value.length > 256 || /[\x00-\x20\x7f]/.test(value)) return false;
+  if (ID.test(value)) return true;
+  // Codex constructs these host IDs as prefix + encodeURIComponent(alias).
+  // Keep that encoded identity intact; the activation URI adds its own encoding.
+  const match = /^(?:remote-ssh-discovered|remote-control|remote-wsl):(.+)$/.exec(value);
+  if (!match) return false;
+  try {
+    const alias = decodeURIComponent(match[1]);
+    return !/[\x00-\x1f\x7f]/.test(alias) && encodeURIComponent(alias) === match[1];
+  } catch { return false; }
+}
 function route(input, generateId = randomUUID) {
   if (!object(input)) throw new TypeError('작업 식별자가 필요합니다.');
   const value = {threadId: input.threadId, hostId: input.hostId ?? 'local',
     kind: input.kind ?? 'local', eventId: input.eventId ?? generateId()};
   for (const name of ROUTE_FIELDS) {
-    if (typeof value[name] !== 'string' || !ID.test(value[name])) {
+    if (name === 'hostId' ? !validHostId(value[name]) : typeof value[name] !== 'string' || !ID.test(value[name])) {
       throw new TypeError(`잘못된 알림 식별자: ${name}`);
     }
   }

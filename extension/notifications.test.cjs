@@ -5,7 +5,7 @@ const {EventEmitter} = require('node:events');
 const path = require('node:path');
 const {createNotifications} = require('./notifications.cjs');
 const {SCHEME, APP_ID, TOAST_CLSID, activationUri} = require('./notification-core.cjs');
-const thread = {threadId: 'task-secret-123', hostId: 'remote-123', kind: 'remote', eventId: 'event-123'};
+const thread = {threadId: 'task-secret-123', hostId: 'remote-ssh-discovered:qa-runner', kind: 'remote', eventId: 'event-123'};
 function windowFixture(id, trusted = true) {
   const sent = [];
   const contents = {id, trusted, send: (...args) => sent.push(args)};
