@@ -99,7 +99,8 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
         try {
           const ack = JSON.parse(fs.readFileSync(acknowledgement, 'utf8'));
           if (ack.ready === true && ack.token === token && Number.isSafeInteger(ack.processId)) {
-            finished = true; fs.unlinkSync(acknowledgement);
+            finished = true;
+            try { fs.unlinkSync(acknowledgement); } catch {}
             resolve({restarting:true});
             // Reply first. Shutdown occurs only after the external worker has
             // opened the exact current Labels process handle and is waiting.
