@@ -61,13 +61,47 @@ class PackageTests(unittest.TestCase):
             create_shortcut(root, link)
             self.assertTrue(link.is_file())
             create_shortcut(root, link)  # Same owner is idempotent.
-            script = "$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut($env:LABELS_TEST_LINK); " \
-                "[pscustomobject]@{Target=$l.TargetPath; Arguments=$l.Arguments} | ConvertTo-Json -Compress"
+            # Probe with the OS Unicode reader: WScript.Shell also fails to read
+            # Unicode links on English Windows, even when the .lnk is valid.
+            script = """
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+[ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ProbeLinkW {
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+    void GetIDList(out IntPtr id);
+    void SetIDList(IntPtr id);
+    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string value);
+}
+public static class ShortcutProbe {
+    public static string[] Read(string path, bool replaceArguments) {
+        object instance = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));
+        try {
+            var file = (IPersistFile)instance; file.Load(path, 0);
+            var link = (ProbeLinkW)instance;
+            var target = new StringBuilder(32768); var arguments = new StringBuilder(32768);
+            link.GetPath(target, target.Capacity, IntPtr.Zero, 4);
+            link.GetArguments(arguments, arguments.Capacity);
+            if (replaceArguments) { link.SetArguments("foreign"); file.Save(path, true); }
+            return new string[] { target.ToString(), arguments.ToString() };
+        } finally { Marshal.FinalReleaseComObject(instance); }
+    }
+}
+'@
+[ShortcutProbe]::Read($env:LABELS_TEST_LINK, ($env:LABELS_TEST_REPLACE -eq '1')) | ConvertTo-Json -Compress
+"""
             value = json.loads(powershell(script, {'LABELS_TEST_LINK': str(link)}))
-            self.assertEqual(Path(value['Target']).resolve(), exe.resolve())
-            self.assertEqual(value['Arguments'], 'launch')
-            powershell("$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut($env:LABELS_TEST_LINK); "
-                "$l.Arguments='foreign'; $l.Save()", {'LABELS_TEST_LINK': str(link)})
+            self.assertEqual(Path(value[0]).resolve(), exe.resolve())
+            self.assertEqual(value[1], 'launch')
+            powershell(script, {'LABELS_TEST_LINK': str(link), 'LABELS_TEST_REPLACE': '1'})
             with self.assertRaisesRegex(RuntimeError, '다른 실행본'):
                 create_shortcut(root, link)
 
