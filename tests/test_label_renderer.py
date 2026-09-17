@@ -151,6 +151,21 @@ class LabelRendererTests(unittest.TestCase):
             ['thread:local:local:first', 'in_progress'], ['thread:local:local:first', None],
             ['project:C:/workspace/demo', 'in_review']])
 
+    def test_label_stays_fixed_outside_moving_title_marquee(self):
+        self.start("""
+            const row=addRow('first'); row.style.cssText='display:flex;width:260px';
+            row.querySelector('.task-title').outerHTML='<span data-marquee-text style="min-width:0;overflow:hidden;flex:1"><span data-marquee-content style="display:block;white-space:nowrap">first</span></span>';
+        """)
+        badge=self.badge()
+        before=badge.bounding_box()
+        self.page.locator('[data-marquee-content]').evaluate("e=>e.style.transform='translateX(-90px)'")
+        self.page.locator('[data-marquee-text]').hover()
+        self.settle()
+        self.assertAlmostEqual(badge.bounding_box()['x'],before['x'],delta=0.5)
+        self.assertFalse(badge.evaluate("e=>!!e.closest('[data-marquee-text]')"))
+        self.choose('진행')
+        self.assertEqual(badge.inner_text(),'진행')
+
     def test_recycled_row_identity_and_replaced_title_are_refreshed(self):
         self.start("""
             addRow('first');

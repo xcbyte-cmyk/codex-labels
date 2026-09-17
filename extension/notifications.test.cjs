@@ -132,6 +132,14 @@ test('registration requests from a different copy cannot redirect an already-run
   h.app.emit('second-instance', {}, ['another.exe', '--codex-labels-register-notifications']);
   assert.equal(h.calls.length, 0); assert.equal(h.service.status().lastResult, 'profile-in-use-by-another-copy');
 });
+
+test('startup registration failures retain the actionable local error', async t => {
+  const executable=path.resolve('fixture','ChatGPT.exe');
+  const h=await harness(t, {argv:[executable,'--codex-labels-register-notifications'],
+    shell:{readShortcutLink(){throw Error('missing');},writeShortcutLink(){throw Error('shortcut failure');}}});
+  assert.equal(h.service.status().lastResult,'registration-failed');
+  assert.equal(h.service.status().registrationError,'shortcut failure');
+});
 test('malicious activation links never navigate or execute commands', async t => {
   const h = await harness(t); h.service.rendererReady(h.windows[0].webContents);
   for (const uri of ['codex://t', 'file:///C:/secret', activationUri(thread) + '&command=approve']) assert.equal(h.service.activate(uri), false);

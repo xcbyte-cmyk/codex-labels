@@ -103,8 +103,11 @@
       badge=document.createElement('span');badge.className='cdx-label';badge.role='button';badge.tabIndex=0;
       badge.setAttribute('aria-haspopup','menu');state.badge=badge;state.view=null;
     }
-    // React may replace or move just the title while preserving the row.
-    if(badge.nextSibling!==node)node.parentNode.insertBefore(badge,node);
+    // The title's marquee translates every descendant. Keep the badge beside
+    // its viewport, so hovering a long title never moves the menu trigger.
+    const marquee=node.parentElement.closest('[data-marquee-text]');
+    const anchor=marquee&&row.contains(marquee)?marquee:node;
+    if(badge.nextSibling!==anchor)anchor.parentNode.insertBefore(badge,anchor);
     const label=labels.get(snapshot.assignments[key]),a=snapshot.config.appearance;
     const view=JSON.stringify([key,label?.name,label?.description,label?.backgroundColor,label?.textColor,
       a.fontSizePx,a.borderRadiusPx,a.verticalPaddingPx,a.horizontalPaddingPx,a.gapPx]);

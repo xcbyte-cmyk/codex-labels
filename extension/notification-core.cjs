@@ -38,11 +38,11 @@ function activationUri(input) {
 }
 function parseActivation(value) {
   if (typeof value !== 'string' || value.length > MAX_URI_LENGTH ||
-      !value.startsWith(`${SCHEME}://activate?`) || /[\x00-\x20\x7f]/.test(value) ||
+      !(value.startsWith(`${SCHEME}://activate?`) || value.startsWith(`${SCHEME}://activate/?`)) || /[\x00-\x20\x7f]/.test(value) ||
       /%(?![0-9a-f]{2})/i.test(value)) throw new TypeError('잘못된 알림 링크입니다.');
   const url = new URL(value);
   if (url.protocol !== `${SCHEME}:` || url.hostname !== 'activate' ||
-      url.pathname || url.username || url.password || url.port || url.hash) {
+      (url.pathname && url.pathname !== '/') || url.username || url.password || url.port || url.hash) {
     throw new TypeError('허용되지 않은 알림 링크입니다.');
   }
   const keys = ['v', ...ROUTE_FIELDS];

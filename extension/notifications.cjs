@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const {createShortcutAdapter} = require('./windows-shortcuts.cjs');
 const {SCHEME, APP_ID, TOAST_CLSID, parseActivation, notificationInput,
   toastXml, activationQueue, boundedDedupe} = require('./notification-core.cjs');
 
@@ -15,6 +16,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   const own = new WeakSet();
   const sent = boundedDedupe({now, ttlMs: 5000});
   const rate = [];
+  const shortcuts = createShortcutAdapter(shell);
   const state = {enabled: false, protocolRegistered: false, nativeHook: false,
     handleActivationAvailable: typeof Notification?.handleActivation === 'function',
     toastClsidAvailable: typeof app.setToastActivatorCLSID === 'function',
@@ -28,7 +30,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   function update(patch) { Object.assign(state, patch); onStatus({...state}); }
   function ownedShortcut() {
     try {
-      const link = shell.readShortcutLink(shortcut);
+      const link = shortcuts.read(shortcut);
       return link.appUserModelId === APP_ID && samePath(link.target, executable);
     } catch { return false; }
   }
@@ -48,7 +50,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     if (platform !== 'win32') throw Error('Windows에서만 알림을 등록할 수 있습니다.');
     if (!samePath(profile, defaultProfile)) throw Error('사용자 지정 테스트 프로필에서는 Windows 등록을 변경하지 않습니다.');
     if (io.existsSync(shortcut)) {
-      const old = shell.readShortcutLink(shortcut);
+      const old = shortcuts.read(shortcut);
       // Explicit registration may move an OWNED Labels shortcut to a new clone.
       if (old.appUserModelId !== APP_ID) throw Error('같은 이름의 다른 바로가기는 덮어쓰지 않습니다.');
     }
@@ -56,7 +58,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     const details = {target: executable, cwd: path.dirname(executable),
       args: `--user-data-dir="${profile}"`, description: 'Codex Labels',
       appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID};
-    if (!shell.writeShortcutLink(shortcut, io.existsSync(shortcut) ? 'update' : 'create', details)) {
+    if (!shortcuts.write(shortcut, io.existsSync(shortcut) ? 'update' : 'create', details)) {
       throw Error('Codex Labels 바로가기 등록에 실패했습니다.');
     }
     if (!app.setAsDefaultProtocolClient(SCHEME, executable, protocolArgs)) {
@@ -64,6 +66,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     }
     refreshIdentity();
     if (!state.enabled || !state.protocolRegistered) throw Error('Windows 알림 등록 결과를 확인할 수 없습니다.');
+    update({registrationError: null});
     installNativeHook();
   }
   function unregister() {
@@ -105,7 +108,14 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   function activate(uri) {
     if (disposed) return false;
     let value;
-    try { value = parseActivation(uri); } catch { update({lastResult: 'invalid-activation'}); return false; }
+    try { value = parseActivation(uri); } catch (error) {
+      let activationShape = null;
+      try { const u = new URL(uri); activationShape = {scheme: u.protocol === SCHEME + ':',
+        host: u.hostname === 'activate', path: u.pathname === '' ? 'empty' : u.pathname === '/' ? 'slash' : 'other',
+        keys: [...u.searchParams.keys()].filter(k => ['v','threadId','hostId','kind','eventId'].includes(k)),
+        parameterCount: [...u.searchParams].length}; } catch {}
+      update({lastResult: 'invalid-activation', activationError: String(error?.message || 'parse failed'), activationShape}); return false;
+    }
     if (!queue.enqueue(value)) return false;
     // Cancel work still waiting in a previously targeted window. Rejecting its
     // eventual ACK alone would not prevent an obsolete row.click() there.
@@ -126,7 +136,11 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
       try {
         if (args.includes('--codex-labels-unregister-notifications')) unregister();
         else register();
-      } catch { update({lastResult: 'registration-failed'}); }
+      } catch (error) {
+        // Registration receives no notification content. Keep its actionable
+        // local error instead of hiding runtime API/shortcut incompatibilities.
+        update({lastResult: 'registration-failed', registrationError: String(error?.message || error).slice(0, 500)});
+      }
     }
     for (const arg of args) if (typeof arg === 'string' && arg.startsWith(`${SCHEME}:`)) activate(arg);
   }

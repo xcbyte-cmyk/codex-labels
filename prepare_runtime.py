@@ -14,7 +14,7 @@ VERSION = 'OpenAI.Codex_26.911.7940.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
 SUPPORTED_APP_VERSION = '26.911.61220'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
@@ -92,6 +92,19 @@ def build_asar(source, target, config_directory, extra=None):
             }
             for name in EXTRA_EXTENSION_FILES:
                 changed['.vite/build/codex-labels/' + name] = (ROOT/'extension'/name).read_bytes()
+            # Exact-version hooks into the existing catalog observation path.
+            # Fail closed on upstream changes; never infer active state from labels.
+            activity_bundle = 'webview/assets/app-initial-9aa16c63159e.js'
+            if activity_bundle not in original:
+                raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
+            activity_source = read(activity_bundle).decode('utf-8')
+            for variable in ('e', 'r'):
+                anchor = f'C_(o,n).observeCatalogThreads({variable})'
+                if activity_source.count(anchor) != 1:
+                    raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
+                activity_source = activity_source.replace(anchor, anchor +
+                    f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)')
+            changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
             if extra:
                 changed.update(extra)
             for name, data in changed.items():

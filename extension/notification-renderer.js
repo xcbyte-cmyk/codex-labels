@@ -6,10 +6,13 @@
   const selector = '[data-app-action-sidebar-thread-row]';
   let selected = null, cancelPending = () => {}, disposed = false, menuFrame = 0, activeEventId = null;
   function identity(row) {
-    const threadId = row?.getAttribute('data-app-action-sidebar-thread-id');
+    const rawId = row?.getAttribute('data-app-action-sidebar-thread-id');
+    const kind = row?.getAttribute('data-app-action-sidebar-thread-kind') || 'local';
+    // Actual sidebar IDs include the kind prefix; RPC/activation IDs do not.
+    const threadId = rawId?.startsWith(kind + ':') ? rawId.slice(kind.length + 1) : rawId;
     return threadId ? {threadId,
       hostId: row.getAttribute('data-app-action-sidebar-thread-host-id') || 'local',
-      kind: row.getAttribute('data-app-action-sidebar-thread-kind') || 'local'} : null;
+      kind} : null;
   }
   function message(text) {
     let box = document.getElementById('codex-labels-notification-status');
