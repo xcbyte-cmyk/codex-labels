@@ -205,9 +205,11 @@ def file_hash(file):
         return hashlib.file_digest(handle, 'sha256').hexdigest()
 
 
-def prepare_runtime(source, root=ROOT):
+def prepare_runtime(source, root=ROOT, *, destination=None, progress=None):
     source, root = Path(source).resolve(), Path(root).resolve()
-    target = root/'runtime/app'
+    target = Path(destination).resolve() if destination else root/'runtime/app'
+    if target.parent != root/'runtime' or target.name in ('', '.', '..'):
+        raise ValueError('Runtime destination must remain inside the installation runtime directory.')
     if target.exists():
         raise ValueError('runtime/app already exists. Close Labels and move it to a backup directory before rebuilding.')
     # Reject both nested directions to avoid recursive copying or copying the app into itself.
@@ -219,9 +221,11 @@ def prepare_runtime(source, root=ROOT):
     stage = root/'runtime'/('.staging-' + uuid.uuid4().hex)
     stage.parent.mkdir(parents=True, exist_ok=True)
     try:
+        if progress: progress('앱 파일을 준비하고 있습니다', 25)
         # Do not copy the ASAR only to overwrite it immediately. Unpacked resources remain intact.
         shutil.copytree(source, stage, ignore=lambda directory, names:
                         ['app.asar'] if Path(directory) == source/'resources' and 'app.asar' in names else [])
+        if progress: progress('라벨 기능을 설치하고 검증하고 있습니다', 65)
         files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root)
         if file_hash(source/'resources/app.asar') != source_hash:
             raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
@@ -235,7 +239,8 @@ def prepare_runtime(source, root=ROOT):
     finally:
         if stage.exists():
             shutil.rmtree(stage)
-    (root/'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
+    if destination is None:
+        (root/'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
     return target, files
 
 

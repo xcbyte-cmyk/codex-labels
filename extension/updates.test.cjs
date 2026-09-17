@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {EventEmitter} = require('node:events');
 const {installStaged, createUpdater} = require('./updates.cjs');
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'labels-update-'));
@@ -57,4 +58,31 @@ test('helper bridge is single flight, fixed command, no shell, and clears inheri
     await assert.rejects(retry,/연결 실패/);
     const next=updater.check();callback(null,'{"available":false}');await next;
   }finally{if(old===undefined)delete process.env._PYI_APPLICATION_HOME_DIR;else process.env._PYI_APPLICATION_HOME_DIR=old;}
+});
+test('local status reports running version separately and restart quits only after worker acknowledgement',async t=>{
+  const {root}=fixture(t);const runtime=path.join(root,'runtime/app');fs.mkdirSync(runtime,{recursive:true});
+  fs.writeFileSync(path.join(runtime,'codex-labels-build.json'),JSON.stringify({helperVersion:'0.1.0'}));
+  let quits=0,requested;
+  const updater=createUpdater(root,{
+    execute(_exe,args,_options,cb){assert.equal(args[0],'update-status');cb(null,JSON.stringify({currentVersion:'0.2.1',downloadedVersion:'0.2.1',pendingRestart:true}));},
+    start(_exe,args,options){
+      requested=args;assert.equal(options.detached,true);assert.equal(options.windowsHide,true);
+      const child=new EventEmitter();child.unref=()=>{};
+      const token=args.at(-1);setTimeout(()=>fs.writeFileSync(path.join(root,'.restarts',token+'.json'),JSON.stringify({ready:true,token,processId:42})),10);
+      return child;
+    },quit(){quits++;}
+  });
+  const status=await updater.status();assert.equal(status.currentVersion,'0.1.0');assert.equal(status.downloadedVersion,'0.2.1');
+  const action=updater.restart();assert.equal(quits,0);
+  assert.equal((await action).restarting,true);assert.equal(quits,0);
+  assert.ok(requested.includes(String(process.pid)));
+  await new Promise(resolve=>setTimeout(resolve,300));assert.equal(quits,1);
+});
+test('missing helper acknowledgement leaves the app running and retry available',async t=>{
+  const {root}=fixture(t);let quits=0;
+  const updater=createUpdater(root,{ackTimeout:10,quit(){quits++;},
+    execute(_e,_a,_o,cb){cb(null,'{"pendingRestart":true}');},
+    start(){const child=new EventEmitter();child.unref=()=>{};return child;}});
+  await assert.rejects(updater.restart(),/앱을 종료하지/);assert.equal(quits,0);
+  await updater.status();
 });

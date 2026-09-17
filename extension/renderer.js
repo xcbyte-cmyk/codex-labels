@@ -189,7 +189,7 @@
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
   function button(text,className,action){const node=element('button',className,text);node.type='button';if(action)node.addEventListener('click',action);return node;}
   function closeSettings(){
-    if(!settings||settings.saving)return;
+    if(!settings||settings.saving||settings.restarting)return;
     const dialog=settings.dialog;settings=null;dialog.close();dialog.remove();
     if(opener?.isConnected)opener.focus();
   }
@@ -199,6 +199,7 @@
     if(changed||snapshot.configError){
       settings.conflict=true;settings.save.disabled=true;
       settings.message(snapshot.configError?'설정 파일에 오류가 있습니다. 파일을 수정한 뒤 다시 불러와 주세요. '+snapshot.configError:'다른 곳에서 라벨 설정을 변경했습니다. 현재 편집 내용은 유지했습니다. 파일 설정을 다시 불러온 뒤 수정해 주세요.',true);
+      settings.updateControls?.();
     }
   }
   async function showSettings(){
@@ -215,7 +216,7 @@
     head.append(title,description);form.append(head);
     const body=element('div','cdx-settings-body'),nav=element('div','cdx-settings-nav');nav.setAttribute('aria-label','편집할 라벨');
     const editor=element('div'),fields=element('div','cdx-settings-fields');editor.append(fields);body.append(nav,editor);form.append(body);
-    const state={dialog,draft:JSON.parse(JSON.stringify(fresh.config)),revision:fresh.configRevision,selected:fresh.config.labels[0]?.id,saving:false,conflict:false};settings=state;
+    const state={dialog,draft:JSON.parse(JSON.stringify(fresh.config)),savedConfig:JSON.stringify(fresh.config),revision:fresh.configRevision,selected:fresh.config.labels[0]?.id,saving:false,conflict:false};settings=state;
     const inputs={},appearanceInputs={},navItems=new Map();
     const addLabel=button('＋ 라벨 추가','cdx-settings-add',()=>{
       if(state.saving||state.draft.labels.length>=100)return;
@@ -253,26 +254,67 @@
     const appearance=element('details'),appearanceTitle=element('summary',null,'배지 모양 · 모든 라벨에 적용'),appearanceFields=element('div','cdx-settings-fields cdx-settings-appearance');appearance.append(appearanceTitle,appearanceFields);editor.append(appearance);
     if(typeof api.checkUpdate==='function'&&typeof api.stageUpdate==='function'){
       const updates=element('details'),summary=element('summary',null,'Codex Labels 업데이트');
-      const message=element('p','cdx-settings-help','새 버전을 직접 확인합니다. 업데이트는 다음 실행 때 적용됩니다.');message.setAttribute('role','status');
+      const versions=element('p','cdx-settings-help');versions.hidden=true;
+      const message=element('p','cdx-settings-help','새 버전을 직접 확인합니다. 다운로드 후 설치 시점을 선택할 수 있습니다.');message.setAttribute('role','status');
+      const restartNotice=element('p','cdx-settings-help','열린 작업이 중단될 수 있습니다. 저장하지 않은 라벨 편집 내용은 사라집니다.');restartNotice.hidden=true;
+      const editNotice=element('p','cdx-settings-help');editNotice.hidden=true;
       let busy=false,result=null;
       const check=button('업데이트 확인',null,()=>runUpdate(false));
       const download=button('다운로드 및 다음 실행에 적용',null,()=>runUpdate(true));download.hidden=true;
-      const updateControls=()=>{check.disabled=busy;download.disabled=busy;download.hidden=!result?.available||!!result?.pendingRestart;};
+      const restart=button('설치하고 다시 실행',null,restartUpdate);restart.hidden=true;
+      const hasDraft=()=>JSON.stringify(state.draft)!==state.savedConfig;
+      const updateControls=()=>{
+        check.disabled=busy||state.saving||state.restarting;download.disabled=check.disabled;
+        download.hidden=!result?.available||!!result?.pendingRestart;
+        restart.hidden=!result?.pendingRestart||typeof api.restartUpdate!=='function';
+        restart.disabled=check.disabled||hasDraft()||state.conflict;
+        restartNotice.hidden=restart.hidden;
+        editNotice.hidden=restart.hidden||(!hasDraft()&&!state.conflict);
+        editNotice.textContent=state.conflict?'파일 설정을 다시 불러온 뒤 설치해 주세요.':'라벨 편집 내용을 먼저 저장하거나 취소해 주세요. 저장하면 설정창을 다시 열어 설치할 수 있습니다.';
+      };
       state.updateControls=updateControls;
+      function showUpdateStatus(){
+        versions.hidden=false;
+        versions.textContent=`실행 중: ${result.currentVersion?'v'+result.currentVersion:'버전 확인 불가'}`;
+        if(result.downloadedVersion)versions.textContent+=` · 다운로드된 버전: v${result.downloadedVersion}`;
+        if(result.latestVersion)versions.textContent+=` · 공개 최신 버전: v${result.latestVersion}`;
+        message.textContent=result.pendingRestart
+          ?(typeof api.restartUpdate==='function'?'다운로드 완료 · 설치 대기 중입니다. 설치하고 다시 실행하거나 나중에 진행할 수 있습니다.':'적용 준비 완료. Labels를 완전히 종료한 뒤 다시 실행해 주세요.')
+          :result.available?'새 버전을 다운로드할 수 있습니다. 다운로드 후 설치 시점을 선택하세요.'
+          :result.latestVersion?'설치할 새 정식 버전이 없습니다.':'다운로드해 둔 업데이트가 없습니다. 업데이트 확인으로 새 버전을 확인할 수 있습니다.';
+      }
       async function runUpdate(install){
-        if(busy)return;busy=true;updateControls();
+        if(busy||state.saving||state.restarting)return;busy=true;updateControls();
         message.textContent=install?'다운로드하고 파일을 검증하고 있습니다…':'새 버전을 확인하고 있습니다…';
         try{
-          result=await (install?api.stageUpdate():api.checkUpdate());
-          message.textContent=result.pendingRestart
-            ?`v${result.currentVersion} 적용 준비 완료. Labels를 완전히 종료한 뒤 바탕화면 Codex Labels로 다시 실행해 주세요.`
-            :result.available?`현재 v${result.currentVersion} · 새 버전 v${result.latestVersion}. 다운로드 후 다음 실행 때 적용됩니다.`
-            :`현재 v${result.currentVersion} · 설치할 새 정식 버전이 없습니다.`;
-        }catch(error){result=null;message.textContent=error?.message||String(error);}
+          result=await (install?api.stageUpdate():api.checkUpdate());showUpdateStatus();
+        }catch(error){message.textContent=(error?.message||String(error))+' 다시 시도해 주세요.';}
         finally{busy=false;updateControls();}
       }
-      const actions=element('div','cdx-update-actions');actions.append(check,download);
-      updates.append(summary,message,actions);editor.append(updates);
+      async function restartUpdate(){
+        if(busy||state.saving||state.restarting||hasDraft()||state.conflict||!result?.pendingRestart)return;
+        state.restarting=true;busy=true;
+        const controls=[...form.querySelectorAll('button,input,textarea')];controls.forEach(control=>control.disabled=true);
+        message.textContent='설치 도구를 준비하고 있습니다…';updateControls();
+        try{
+          const response=await api.restartUpdate();
+          if(!response?.restarting)throw Error('설치 도구의 시작을 확인하지 못했습니다.');
+          message.textContent='Labels를 종료하고 업데이트를 설치합니다. 완료되면 자동으로 다시 열립니다.';
+        }catch(error){
+          state.restarting=false;busy=false;controls.forEach(control=>control.disabled=false);
+          addLabel.disabled=state.draft.labels.length>=100;state.save.disabled=state.conflict;updateControls();
+          message.textContent=(error?.message||String(error))+' 다시 시도해 주세요.';
+        }
+      }
+      async function readUpdateStatus(){
+        busy=true;updateControls();message.textContent='이 PC의 업데이트 상태를 확인하고 있습니다…';
+        try{result=await api.updateStatus();showUpdateStatus();if(result.pendingRestart)updates.open=true;}
+        catch(error){message.textContent='이 PC의 업데이트 상태를 읽지 못했습니다. 업데이트 확인을 눌러 다시 시도해 주세요. '+(error?.message||String(error));updates.open=true;}
+        finally{busy=false;updateControls();}
+      }
+      const actions=element('div','cdx-update-actions');actions.append(check,download,restart);
+      updates.append(summary,versions,message,restartNotice,editNotice,actions);editor.append(updates);
+      if(typeof api.updateStatus==='function')readUpdateStatus();
     }
     const appearanceSpecs=[['fontSizePx','글자 크기 (px)',8,32],['borderRadiusPx','둥근 모서리 (px)',0,30],['horizontalPaddingPx','좌우 여백 (px)',0,30],['verticalPaddingPx','상하 여백 (px)',0,20],['gapPx','제목과의 간격 (px)',0,40]];
     for(const [key,labelText,min,max] of appearanceSpecs){
@@ -286,7 +328,7 @@
       try{
         const next=await readFresh();if(settings!==state)return;
         if(next.configError)throw new Error('설정 파일 오류가 남아 있습니다: '+next.configError);
-        acceptSnapshot(next);state.draft=JSON.parse(JSON.stringify(next.config));state.revision=next.configRevision;state.conflict=false;state.save.disabled=false;status.hidden=true;
+        acceptSnapshot(next);state.draft=JSON.parse(JSON.stringify(next.config));state.savedConfig=JSON.stringify(next.config);state.revision=next.configRevision;state.conflict=false;state.save.disabled=false;status.hidden=true;
         rebuildNav();selectLabel(state.draft.labels.some(label=>label.id===state.selected)?state.selected:state.draft.labels[0]?.id);fillAppearance();inputs.name.focus();
       }catch(e){state.message(e?.message||String(e),true);}finally{reload.disabled=false;}
     });reload.title='현재 편집 내용을 취소하고 파일에 저장된 설정을 가져옵니다.';status.append(statusText,reload);form.append(status);
@@ -310,13 +352,14 @@
       updatePreview();
     }
     function updatePreview(){
+      state.updateControls?.();
       for(const label of state.draft.labels){const item=navItems.get(label.id);if(!item)continue;item.text.textContent=(label.name||'이름 없음')+(label.enabled?'':' · 숨김');item.dot.style.backgroundColor=/^#[0-9a-f]{6}$/i.test(label.backgroundColor)?label.backgroundColor:'#6b7280';item.select.setAttribute('aria-pressed',String(label.id===state.selected));}
       const label=current();if(!label)return;const a=state.draft.appearance;
       previewBadge.textContent=label.name||'라벨';Object.assign(previewBadge.style,{backgroundColor:label.backgroundColor,color:label.textColor,fontSize:a.fontSizePx+'px',borderRadius:a.borderRadiusPx+'px',padding:`${a.verticalPaddingPx}px ${a.horizontalPaddingPx}px`,marginInlineEnd:a.gapPx+'px'});
       previewHelp.textContent=label.enabled?'저장 전에는 실제 사이드바에 반영되지 않습니다.':'사용을 끄면 선택 메뉴와 배지에서 숨겨집니다. 기존 지정 정보는 유지됩니다.';
     }
     form.addEventListener('submit',async event=>{
-      event.preventDefault();if(state.saving||state.conflict)return;
+      event.preventDefault();if(state.saving||state.restarting||state.conflict)return;
       const invalid=state.draft.labels.find(label=>!label.name.trim()||label.name.length>30||!/^#[0-9a-f]{6}$/i.test(label.backgroundColor)||!/^#[0-9a-f]{6}$/i.test(label.textColor)||!Number.isFinite(label.order));
       if(invalid){selectLabel(invalid.id);form.reportValidity();return;}
       if(Object.values(appearanceInputs).some(input=>!input.validity.valid))appearance.open=true;

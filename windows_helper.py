@@ -9,11 +9,13 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import uuid
+import re
 
 import prepare_runtime as builder
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
@@ -101,7 +103,7 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'labels.example.json']
+    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'launcher_ui.py', ASSETS/'labels.example.json']
     files += sorted((ASSETS/'extension').glob('*.js'))
     files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
     for file in files:
@@ -142,7 +144,33 @@ def write_json(path, value):
         temp.unlink(missing_ok=True)
 
 
-def prepare(root, source):
+def valid_runtime(root, target):
+    root = Path(root).resolve()
+    target = Path(target)
+    expected = root/'runtime'/target.name
+    try:
+        receipt = json.loads((target/'codex-labels-build.json').read_text(encoding='utf-8'))
+        return (receipt.get('version') == 3 and Path(receipt.get('configPath', '')).resolve() == root/'labels.json'
+                and target.resolve() == expected and (target/'ChatGPT.exe').is_file()
+                and builder.file_hash(target/'resources/app.asar') == receipt.get('patchedAsarSha256'))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def recover_runtime(root):
+    """Recover the tiny publish window, including pre-journal legacy updates."""
+    root = Path(root).resolve()
+    target = root/'runtime/app'
+    if target.exists():
+        return
+    for backup in sorted((root/'runtime').glob('app.backup-*'), reverse=True):
+        if valid_runtime(root, backup):
+            backup.rename(target)
+            write_json(root/'build-manifest.json', read_receipt(root))
+            return
+
+
+def prepare(root, source, progress=None):
     root, source = Path(root).resolve(), Path(source).resolve()
     builder.validate_source(source)  # Validate before creating or moving anything.
     target = root/'runtime/app'
@@ -166,17 +194,23 @@ def prepare(root, source):
         raise RuntimeError(f'설치 공간이 부족합니다. 약 {needed / (1024**3):.1f}GB의 여유 공간이 필요합니다.')
     if root != ASSETS:
         shutil.copyfile(ASSETS/'labels.example.json', root/'labels.example.json')
-    # Keep the old working runtime until the new staged build is verified. Never
-    # delete backups automatically, and never move a path outside this root.
+    # Build beside the usable runtime. Only the short final publication moves
+    # the old app; interruption during the expensive copy cannot remove it.
+    incoming = target.with_name('.prepared-' + uuid.uuid4().hex)
     backup = None
-    if target.exists():
-        backup = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
-        target.rename(backup)
     try:
-        builder.prepare_runtime(source, root)
-        receipt = read_receipt(root)
+        builder.prepare_runtime(source, root, destination=incoming, progress=progress)
+        receipt = json.loads((incoming/'codex-labels-build.json').read_text(encoding='utf-8'))
         receipt.update(helperVersion=VERSION, helperPayloadSha256=payload_fingerprint())
-        write_json(target/'codex-labels-build.json', receipt)
+        write_json(incoming/'codex-labels-build.json', receipt)
+        if progress: progress('검증된 새 버전으로 교체하고 있습니다', 80)
+        if target.exists() and (target/'ChatGPT.exe').resolve() in running_apps():
+            raise RuntimeError('설치 중 Labels가 다시 열렸습니다. 현재 실행본을 유지합니다. 앱에서 다시 설치해 주세요.')
+        if target.exists():
+            previous = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
+            target.rename(previous)
+            backup = previous
+        incoming.rename(target)
         write_json(root/'build-manifest.json', receipt)
     except Exception:
         if backup is not None:
@@ -186,6 +220,11 @@ def prepare(root, source):
             backup.rename(target)
             write_json(root/'build-manifest.json', read_receipt(root))
         raise
+    finally:
+        # Preserve an interrupted/failed candidate for diagnosis, never delete
+        # user data or the previous runtime in this recovery path.
+        if incoming.exists():
+            incoming.rename(incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
     return {'ready': True, 'root': str(root), 'backup': str(backup) if backup else None}
 
 
@@ -258,32 +297,123 @@ public static class LabelsShortcut {
         'LABELS_ICON_PATH': str(root/'runtime/app/ChatGPT.exe'), 'LABELS_LINK_DEST': str(destination or '')})
 
 
-def launch(root):
-    root = Path(root).resolve()
+def update_status(root):
     receipt = read_receipt(root)
-    # A newly installed helper carries a new extension payload. Reuse the
-    # guarded, preserving installer after the old Labels app has been closed.
-    if receipt and receipt.get('version') == 3 and receipt.get('helperPayloadSha256') != payload_fingerprint():
-        with preparation_lock(root):
-            prepare(root, find_source())
-    exe = require_ready(root)
-    if any(app != exe.resolve() for app in running_apps()):
+    return {'currentVersion': receipt.get('helperVersion') if receipt else None,
+            'downloadedVersion': VERSION, 'pendingRestart': not receipt or receipt.get('helperPayloadSha256') != payload_fingerprint()}
+
+
+def wait_for_parent(pid, root, token, progress, timeout=120):
+    """Only observe the specified Labels process; never terminate any app."""
+    import ctypes
+    from ctypes import wintypes
+    if not re.fullmatch(r'[0-9a-f]{32}', token or '') or pid <= 0:
+        raise ValueError('잘못된 재시작 요청입니다.')
+    cancelled = root/'.restarts'/(token+'.cancel')
+    if cancelled.exists():
+        return False
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    handle = kernel.OpenProcess(0x100000 | 0x1000, False, pid)
+    if not handle:
+        raise RuntimeError('종료할 Labels 프로세스를 확인하지 못했습니다. 앱에서 다시 시도해 주세요.')
+    try:
+        size = wintypes.DWORD(32768); buffer = ctypes.create_unicode_buffer(size.value)
+        if not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) or Path(buffer.value).resolve() != root/'runtime/app/ChatGPT.exe':
+            raise RuntimeError('다른 앱의 종료 요청은 처리할 수 없습니다.')
+        acknowledgements = root/'.restarts'
+        if acknowledgements.resolve() != acknowledgements:
+            raise RuntimeError('재시작 폴더가 다른 경로로 연결되어 있습니다.')
+        acknowledgements.mkdir(exist_ok=True)
+        if cancelled.exists():
+            return False
+        write_json(acknowledgements/(token+'.json'), {'ready': True, 'processId': os.getpid(), 'token': token})
+        progress('Labels가 종료되기를 기다리고 있습니다', 10)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if cancelled.exists():
+                return False
+            if kernel.WaitForSingleObject(handle, 250) == 0:
+                return not cancelled.exists()
+        raise RuntimeError('앱 종료가 취소되었거나 지연되었습니다. 현재 앱은 변경하지 않았습니다.')
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def wait_until_active(root, process, started, timeout=75, allow_forwarded=False):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            status = json.loads((root/'runtime-status.json').read_text(encoding='utf-8'))
+            updated = datetime.fromisoformat(status['updatedAt'].replace('Z', '+00:00')).timestamp()
+            identity_matches = (status.get('launchToken') == process.labels_launch_token or
+                                process.labels_launch_token in status.get('recentLaunchTokens', []) or
+                                (not status.get('launchToken') and status.get('processId') == process.pid))
+            if (status.get('status') == 'active' and identity_matches
+                    and updated >= started and Path(status['executable']).resolve() == root/'runtime/app/ChatGPT.exe'):
+                return status
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if process.poll() is not None and not allow_forwarded:
+            raise RuntimeError('Labels가 준비되기 전에 종료되었습니다. 다시 시도해 주세요.')
+        time.sleep(0.2)
+    raise RuntimeError('앱 화면의 준비 완료를 확인하지 못했습니다. 열린 Labels 창을 확인해 주세요.')
+
+
+def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False):
+    root = Path(root).resolve()
+    progress = progress or (lambda *_: None)
+    progress('설치 상태를 확인하고 있습니다', 5)
+    update_error = None
+    root.mkdir(parents=True, exist_ok=True)
+    with preparation_lock(root):
+        recover_runtime(root)
+        try:
+            exe = require_ready(root)
+        except RuntimeError:
+            if running_apps():
+                raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
+            try:
+                prepare(root, find_source(source), progress)
+                exe = require_ready(root)
+            except Exception as error:
+                exe = root/'runtime/app/ChatGPT.exe'
+                if not valid_runtime(root, exe.parent):
+                    raise
+                update_error = str(error)
+    existing = running_apps()
+    if any(app != exe.resolve() for app in existing):
         raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')
+    if shortcut:
+        create_shortcut(root)
     profile = profile_path()
     profile.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env['CODEX_ELECTRON_USER_DATA_PATH'] = str(profile)
+    env['CODEX_LABELS_LAUNCH_TOKEN'] = uuid.uuid4().hex
     env.pop('ELECTRON_RUN_AS_NODE', None)
     # The one-file helper's extraction directory is deleted when it exits.
     # Do not let the app or a later same-path helper inherit that directory.
     for name in list(env):
         if name.startswith('_PYI_'):
             del env[name]
-    process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile)], cwd=exe.parent,
+    progress('Codex Labels를 열고 있습니다', 90)
+    started = time.time()
+    process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
         env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
     status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
         'executable': str(exe), 'profile': str(profile), 'originalAppStopped': False}
     write_json(root/'launch-status.json', status)
+    if wait_ready:
+        active = wait_until_active(root, process, started, allow_forwarded=bool(existing))
+        status.update(status='active', processId=active['processId'], updateError=update_error)
+        write_json(root/'launch-status.json', status)
+        progress('Codex Labels가 열렸습니다', 100)
     return status
 
 
@@ -291,22 +421,30 @@ def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage'], nargs='?', default='prepare')
+    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status'], nargs='?', default='launch')
     parser.add_argument('--root', type=Path, default=default_root())
     parser.add_argument('--source', type=Path)
     parser.add_argument('--shortcut', action='store_true')
+    parser.add_argument('--wait-pid', type=int)
+    parser.add_argument('--restart-token')
+    parser.add_argument('--no-ui', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--version', action='version', version=VERSION)
     args = parser.parse_args()
+    # Old installer shortcuts used prepare --shortcut. Keep them on the new
+    # single install-and-open flow when used interactively.
+    if args.action == 'prepare' and args.shortcut and not args.no_ui:
+        args.action = 'launch'
     root = args.root.resolve()
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
-        if args.action in ('update-check', 'update-stage'):
+        if args.action == 'update-status':
+            result = update_status(root)
+        elif args.action in ('update-check', 'update-stage'):
             import updater
             if args.action == 'update-check':
                 result, _ = updater.release(VERSION)
-                receipt = read_receipt(root)
-                result['pendingRestart'] = bool(receipt and receipt.get('helperPayloadSha256') != payload_fingerprint())
+                result.update(update_status(root))
             else:
                 with preparation_lock(root):
                     # Read installed metadata without forcing the OLD helper's
@@ -335,7 +473,31 @@ def main():
                     result['shortcut'] = create_shortcut(root)
             print('준비 완료. 다음부터 실행.cmd 또는 바탕화면 바로가기를 사용하세요.', flush=True)
         else:
-            result = launch(root)
+            parent_exited = False
+            def operation(progress):
+                nonlocal parent_exited
+                if args.wait_pid and not parent_exited:
+                    if not wait_for_parent(args.wait_pid, root, args.restart_token, progress):
+                        return {'cancelled': True}
+                    parent_exited = True
+                    # Browser children can outlive the main process briefly.
+                    deadline = time.monotonic() + 30
+                    while running_apps():
+                        if time.monotonic() > deadline:
+                            raise RuntimeError('Labels의 종료가 아직 끝나지 않았습니다. 잠시 후 다시 시도해 주세요.')
+                        time.sleep(0.5)
+                try:
+                    return launch(root, progress=progress, wait_ready=not args.no_ui,
+                                  source=args.source, shortcut=args.shortcut)
+                except Exception as error:
+                    write_json(root/'launch-error.json', {'message': str(error), 'at': time.time()})
+                    raise
+            if getattr(sys, 'frozen', False) and not args.no_ui:
+                import ctypes
+                ctypes.windll.kernel32.FreeConsole()
+                import launcher_ui
+                return launcher_ui.run(operation)
+            result = operation(lambda message, percent: print(message, flush=True))
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return 0
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
