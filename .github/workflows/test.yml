@@ -49,4 +49,4 @@ jobs:
       - name: Synthetic sidebar in real Chromium
         env:
           CODEX_LABELS_BROWSER_TESTS: '1'
-        run: python -m unittest discover -s tests -p test_notification_renderer.py -v
+        run: python -m unittest discover -s tests -p 'test_*renderer.py' -v

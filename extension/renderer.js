@@ -5,7 +5,12 @@
   const api = window.codexLabels;
   const threadSel='[data-app-action-sidebar-thread-row]';
   const projectSel='[data-app-action-sidebar-project-row]';
-  let snapshot,signature='',menu=null,menuKey=null,opener=null,settings=null,openingSettings=false,scheduled=false,reading=false,writing=false,lastReport='';
+  const rowSelector=threadSel+','+projectSel;
+  const ownSelector='#cdx-label-menu,#cdx-label-error,#cdx-label-settings,.cdx-label';
+  const rows=new Map(),dirtyRows=new Set();
+  let labels=new Map(),snapshot,menu=null,menuKey=null,opener=null,settings=null,openingSettings=false;
+  let frame=0,reading=false,writing=false,readPending=false,readEpoch=0,disposed=false,lastReport='';
+  let readQueue=Promise.resolve();
   const style=document.createElement('style');style.id='codex-label-styles';
   style.textContent=`
     .cdx-label{display:inline-flex!important;align-items:center;justify-content:center;flex-shrink:0;white-space:nowrap;line-height:1.4;vertical-align:middle;font-family:inherit;font-weight:600;cursor:pointer;user-select:none;max-width:140px;overflow:hidden;text-overflow:ellipsis}
@@ -65,25 +70,94 @@
     for(let node;node=walker.nextNode();){if(node.parentElement.closest('.cdx-label'))continue;if(node.textContent.trim()===title.trim())return node;}
     return null;
   }
+  function observeRow(row,state){
+    state.observer.observe(row,{childList:true,subtree:true,characterData:true,attributes:true,
+      attributeFilter:['data-app-action-sidebar-thread-title','data-app-action-sidebar-thread-id',
+        'data-app-action-sidebar-thread-host-id','data-app-action-sidebar-thread-kind',
+        'data-app-action-sidebar-project-label','data-app-action-sidebar-project-id']});
+  }
+  function registerRow(row){
+    if(rows.has(row)||!row.isConnected)return;
+    const state={badge:null,view:null,observer:new MutationObserver(mutations=>{
+      if(mutations.some(m=>!(m.target instanceof Element?m.target:m.target.parentElement)?.closest(ownSelector))){
+        dirtyRows.add(row);schedule();
+      }
+    })};
+    rows.set(row,state);observeRow(row,state);dirtyRows.add(row);schedule();
+  }
+  function unregisterRow(row){
+    if(row.isConnected&&row.matches(rowSelector))return;
+    const state=rows.get(row);if(!state)return;
+    state.observer.disconnect();state.badge?.remove();rows.delete(row);dirtyRows.delete(row);schedule();
+  }
+  function visitRows(node,visit){
+    if(!(node instanceof Element)||node.closest(ownSelector))return;
+    if(node.matches(rowSelector))visit(node);
+    node.querySelectorAll(rowSelector).forEach(visit);
+  }
+  function paintRow(row,state){
+    const key=identity(row),node=key&&titleNode(row);
+    if(!node){state.badge?.remove();state.badge=null;state.view=null;return;}
+    let badge=state.badge;
+    if(!badge||!row.contains(badge)){
+      badge=document.createElement('span');badge.className='cdx-label';badge.role='button';badge.tabIndex=0;
+      badge.setAttribute('aria-haspopup','menu');state.badge=badge;state.view=null;
+    }
+    // React may replace or move just the title while preserving the row.
+    if(badge.nextSibling!==node)node.parentNode.insertBefore(badge,node);
+    const label=labels.get(snapshot.assignments[key]),a=snapshot.config.appearance;
+    const view=JSON.stringify([key,label?.name,label?.description,label?.backgroundColor,label?.textColor,
+      a.fontSizePx,a.borderRadiusPx,a.verticalPaddingPx,a.horizontalPaddingPx,a.gapPx]);
+    if(view===state.view)return;
+    state.view=view;badge.dataset.key=key;badge.textContent=label?label.name:'＋';
+    badge.toggleAttribute('data-unset',!label);
+    badge.setAttribute('aria-label',label?`상태 ${label.name} 변경`:'라벨 지정');
+    badge.title=label?`${label.description} · 클릭하여 변경`:'라벨 지정';
+    Object.assign(badge.style,{backgroundColor:label?.backgroundColor||'transparent',color:label?.textColor||'inherit',fontSize:a.fontSizePx+'px',borderRadius:a.borderRadiusPx+'px',padding:`${a.verticalPaddingPx}px ${a.horizontalPaddingPx}px`,marginInlineEnd:a.gapPx+'px'});
+  }
   function paint(){
     if(!snapshot)return;
-    for(const row of document.querySelectorAll(threadSel+','+projectSel)){
-      const key=identity(row);if(!key)continue;
-      let badge=[...row.querySelectorAll('.cdx-label')].find(b=>b.closest(threadSel+','+projectSel)===row);
-      const node=titleNode(row);if(!node){badge?.remove();continue;}
-      if(!badge){badge=document.createElement('span');badge.className='cdx-label';badge.role='button';badge.tabIndex=0;node.parentNode.insertBefore(badge,node);}
-      badge.dataset.key=key;
-      const id=snapshot.assignments[key],label=snapshot.config.labels.find(l=>l.id===id && l.enabled),a=snapshot.config.appearance;
-      badge.textContent=label?label.name:'＋';
-      badge.toggleAttribute('data-unset',!label);
-      badge.setAttribute('aria-label',label?`상태 ${label.name} 변경`:'라벨 지정');badge.setAttribute('aria-haspopup','menu');
-      badge.title=label?`${label.description} · 클릭하여 변경`:'라벨 지정';
-      Object.assign(badge.style,{backgroundColor:label?.backgroundColor||'transparent',color:label?.textColor||'inherit',fontSize:a.fontSizePx+'px',borderRadius:a.borderRadiusPx+'px',padding:`${a.verticalPaddingPx}px ${a.horizontalPaddingPx}px`,marginInlineEnd:a.gapPx+'px'});
+    for(const row of dirtyRows){
+      const state=rows.get(row);if(!state)continue;
+      if(!row.isConnected){unregisterRow(row);continue;}
+      state.observer.disconnect();
+      try{paintRow(row,state);}finally{observeRow(row,state);}
     }
-    const counts={rows:document.querySelectorAll(threadSel+','+projectSel).length,badges:document.querySelectorAll('.cdx-label').length},report=JSON.stringify(counts);
-    if(api.report && report!==lastReport){lastReport=report;api.report(counts).catch(()=>{lastReport='';});}
+    dirtyRows.clear();
+    const counts={rows:rows.size,badges:[...rows.values()].filter(state=>state.badge?.isConnected).length};
+    const report=JSON.stringify(counts);
+    if(api.report&&report!==lastReport){lastReport=report;api.report(counts).catch(()=>{lastReport='';});}
   }
-  function schedule(){if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;observer.disconnect();try{paint();}finally{observe();}});}
+  function schedule(){if(frame||disposed)return;frame=requestAnimationFrame(()=>{frame=0;paint();});}
+  function acceptSnapshot(next){
+    if(!next||disposed||next.snapshotVersion&&snapshot?.snapshotVersion===next.snapshotVersion)return;
+    const previous=snapshot,configChanged=!previous||previous.configRevision!==next.configRevision;
+    snapshot=next;
+    if(configChanged)labels=new Map(next.config.labels.filter(label=>label.enabled).map(label=>[label.id,label]));
+    for(const row of rows.keys()){
+      const key=identity(row);
+      if(configChanged||previous.assignments[key]!==next.assignments[key])dirtyRows.add(row);
+    }
+    if(dirtyRows.size)schedule();
+    settingsChangedExternally();
+    if(menu&&opener?.isConnected)showMenu(opener);
+  }
+  function beginWrite(){writing=true;readEpoch++;}
+  function endWrite(){writing=false;if(readPending)read();}
+  function fetchSnapshot(knownVersion){
+    // Settings dialogs and background refreshes share one read lane. A slow
+    // response must not arrive after a newer response and roll the UI back.
+    const request=readQueue.then(()=>{
+      if(disposed)throw Error('라벨 화면이 종료되었습니다.');
+      return api.read(knownVersion);
+    });
+    readQueue=request.catch(()=>{});return request;
+  }
+  async function readFresh(){
+    const epoch=++readEpoch,next=await fetchSnapshot();
+    if(disposed||epoch!==readEpoch){read();throw Error('설정이 변경되었습니다. 다시 불러와 주세요.');}
+    return next;
+  }
   function closeMenu(focus=false){menu?.remove();menu=null;menuKey=null;if(focus&&opener?.isConnected)opener.focus();}
   function showMenu(badge){
     closeMenu();opener=badge;menuKey=badge.dataset.key;
@@ -91,9 +165,9 @@
     const caption=document.createElement('div');caption.className='caption';caption.textContent='상태 선택';menu.append(caption);
     const add=(text,color,action)=>{const b=document.createElement('button');b.type='button';b.role='menuitem';if(color){const dot=document.createElement('span');dot.className='swatch';dot.style.backgroundColor=color;b.append(dot);}b.append(document.createTextNode(text));b.addEventListener('click',action);menu.append(b);};
     const choose=id=>async()=>{
-      if(writing)return;writing=true;const key=menuKey;menu.querySelectorAll('button').forEach(b=>b.disabled=true);
-      try{snapshot=await api.assign(key,id);signature=JSON.stringify(snapshot);closeMenu(true);schedule();document.getElementById('cdx-label-error')?.remove();}
-      catch(e){error(e);menu?.querySelectorAll('button').forEach(b=>b.disabled=false);}finally{writing=false;}
+      if(writing)return;beginWrite();const key=menuKey;menu.querySelectorAll('button').forEach(b=>b.disabled=true);
+      try{acceptSnapshot(await api.assign(key,id));closeMenu(true);document.getElementById('cdx-label-error')?.remove();}
+      catch(e){error(e);menu?.querySelectorAll('button').forEach(b=>b.disabled=false);}finally{endWrite();}
     };
     for(const l of [...snapshot.config.labels].filter(l=>l.enabled).sort((a,b)=>a.order-b.order))add(l.name,l.backgroundColor,choose(l.id));
     add('라벨 해제',null,choose(null));add('라벨 설정…',null,()=>showSettings().catch(error));
@@ -119,8 +193,9 @@
     if(settings){settings.dialog.focus();return;}
     if(openingSettings)return;openingSettings=true;closeMenu();
     let fresh;
-    try{fresh=await api.read();}finally{openingSettings=false;}
-    snapshot=fresh;signature=JSON.stringify(fresh);schedule();
+    try{fresh=await readFresh();}finally{openingSettings=false;}
+    if(disposed)return;
+    acceptSnapshot(fresh);
     const dialog=element('dialog');dialog.id='cdx-label-settings';dialog.setAttribute('aria-labelledby','cdx-label-settings-title');dialog.setAttribute('aria-describedby','cdx-label-settings-description');
     const form=element('form'),head=element('div','cdx-settings-head');form.noValidate=true;
     const title=element('h2',null,'라벨 설정');title.id='cdx-label-settings-title';
@@ -166,10 +241,10 @@
       if(state.saving)return;
       reload.disabled=true;
       try{
-        const next=await api.read();if(settings!==state)return;
+        const next=await readFresh();if(settings!==state)return;
         if(next.configError)throw new Error('설정 파일 오류가 남아 있습니다: '+next.configError);
-        snapshot=next;signature=JSON.stringify(next);state.draft=JSON.parse(JSON.stringify(next.config));state.revision=next.configRevision;state.conflict=false;state.save.disabled=false;status.hidden=true;
-        rebuildNav();selectLabel(state.draft.labels.some(label=>label.id===state.selected)?state.selected:state.draft.labels[0]?.id);fillAppearance();schedule();inputs.name.focus();
+        acceptSnapshot(next);state.draft=JSON.parse(JSON.stringify(next.config));state.revision=next.configRevision;state.conflict=false;state.save.disabled=false;status.hidden=true;
+        rebuildNav();selectLabel(state.draft.labels.some(label=>label.id===state.selected)?state.selected:state.draft.labels[0]?.id);fillAppearance();inputs.name.focus();
       }catch(e){state.message(e?.message||String(e),true);}finally{reload.disabled=false;}
     });reload.title='현재 편집 내용을 취소하고 파일에 저장된 설정을 가져옵니다.';status.append(statusText,reload);form.append(status);
     state.message=(text,canReload=false)=>{statusText.textContent=text;reload.hidden=!canReload;status.hidden=false;};
@@ -201,13 +276,13 @@
       if(Object.values(appearanceInputs).some(input=>!input.validity.valid))appearance.open=true;
       if(!form.reportValidity())return;
       if(typeof api.saveConfig!=='function'){state.message('설정 저장 기능을 사용할 수 없습니다. 최신 라벨 앱으로 다시 실행해 주세요.');return;}
-      state.saving=true;writing=true;dialog.setAttribute('aria-busy','true');save.textContent='저장 중…';
+      state.saving=true;beginWrite();dialog.setAttribute('aria-busy','true');save.textContent='저장 중…';
       const controls=[...form.querySelectorAll('button,input,textarea')];controls.forEach(control=>control.disabled=true);
       try{
         const next=await api.saveConfig({labels:state.draft.labels,appearance:state.draft.appearance},state.revision);
-        snapshot=next;signature=JSON.stringify(next);state.saving=false;closeSettings();schedule();document.getElementById('cdx-label-error')?.remove();
+        acceptSnapshot(next);state.saving=false;closeSettings();document.getElementById('cdx-label-error')?.remove();
       }catch(e){state.message(e?.message||String(e),true);}
-      finally{state.saving=false;writing=false;if(settings===state){controls.forEach(control=>control.disabled=false);save.textContent='저장';dialog.removeAttribute('aria-busy');settingsChangedExternally();}}
+      finally{state.saving=false;endWrite();if(settings===state){controls.forEach(control=>control.disabled=false);save.textContent='저장';dialog.removeAttribute('aria-busy');settingsChangedExternally();}}
     });
     // Native modal focus handling is supplemented for predictable Tab/Escape behavior.
     dialog.addEventListener('cancel',event=>{event.preventDefault();closeSettings();});
@@ -236,8 +311,44 @@
     if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();e.stopImmediatePropagation();const buttons=[...menu.querySelectorAll('button:not(:disabled)')],i=buttons.indexOf(document.activeElement);const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;buttons[next]?.focus();}
   },true);
   document.addEventListener('scroll',()=>closeMenu(),true);window.addEventListener('resize',()=>closeMenu());
-  async function read(){if(reading||writing)return;reading=true;try{const next=await api.read(),s=JSON.stringify(next);if(s!==signature){snapshot=next;signature=s;schedule();settingsChangedExternally();if(menu&&opener?.isConnected)showMenu(opener);}}catch(e){error(e);}finally{reading=false;}}
-  const observer=new MutationObserver(mutations=>{if(mutations.some(m=>!(m.target instanceof Element?m.target:m.target.parentElement)?.closest('#cdx-label-menu,#cdx-label-error,#cdx-label-settings,.cdx-label')))schedule();});
-  function observe(){observer.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-app-action-sidebar-thread-title','data-app-action-sidebar-thread-id','data-app-action-sidebar-project-label','data-app-action-sidebar-project-id']});}
-  observe();read();setInterval(()=>{if(!document.hidden)read();},1500);window.addEventListener('focus',read);
+  async function read(){
+    if(disposed)return;
+    readPending=true;
+    if(reading||writing||document.hidden)return;
+    readPending=false;reading=true;const epoch=readEpoch;
+    try{
+      const next=await fetchSnapshot(snapshot?.snapshotVersion);
+      if(epoch===readEpoch)acceptSnapshot(next);else readPending=true;
+    }catch(e){if(!disposed)error(e);}
+    finally{reading=false;if(readPending&&!disposed)read();}
+  }
+  // Discovery only inspects changed subtrees. Chat mutations never schedule a
+  // repaint of existing rows; row-local observers handle identity/title changes.
+  const discovery=new MutationObserver(mutations=>{
+    for(const mutation of mutations){
+      if(mutation.type==='attributes'){
+        if(mutation.target.matches(rowSelector))registerRow(mutation.target);else unregisterRow(mutation.target);
+        continue;
+      }
+      for(const node of mutation.removedNodes)visitRows(node,unregisterRow);
+      for(const node of mutation.addedNodes)visitRows(node,registerRow);
+    }
+  });
+  function start(){
+    discovery.observe(document.body,{childList:true,subtree:true,attributes:true,
+      attributeFilter:['data-app-action-sidebar-thread-row','data-app-action-sidebar-project-row']});
+    document.querySelectorAll(rowSelector).forEach(registerRow);
+    unsubscribe=api.onChanged?.(read);read();
+    poll=setInterval(()=>{if(!document.hidden)read();},30000);
+  }
+  function stop(){
+    disposed=true;discovery.disconnect();for(const state of rows.values())state.observer.disconnect();
+    rows.clear();dirtyRows.clear();cancelAnimationFrame(frame);frame=0;clearInterval(poll);unsubscribe?.();unsubscribe=undefined;
+    window.removeEventListener('focus',read);document.removeEventListener('visibilitychange',visible);
+  }
+  function visible(){if(!document.hidden)read();}
+  let unsubscribe,poll;
+  window.addEventListener('focus',read);document.addEventListener('visibilitychange',visible);
+  window.addEventListener('pagehide',stop,{once:true});
+  start();
 })();

@@ -19,7 +19,7 @@ if (process.platform === 'win32') {
   app.setPath('userData', profile);
 }
 const store = createStore(configDirectory);
-const cache = createSnapshotCache(store, configDirectory);
+const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
 const statusPath = path.join(configDirectory, 'runtime-status.json');
 let status = {version: 3, status: 'starting', settingsAvailable: true,
   processId: process.pid, executable: process.execPath, electronVersion: process.versions.electron || null,
@@ -59,15 +59,24 @@ function check(event) {
     throw Error('라벨 설정에 접근할 수 없는 화면입니다.');
   }
 }
+function broadcastConfigChange() {
+  for (const window of BrowserWindow.getAllWindows()) {
+    // Send only a signal to trusted top-level renderers. Recheck on every send
+    // because a window can navigate or close between the watcher and callback.
+    try {
+      if (!window.isDestroyed() && trustedContent(window.webContents)) window.webContents.send('codex-labels:changed');
+    } catch { /* A closing renderer must not prevent updates to other windows. */ }
+  }
+}
 const notifications = createNotifications({app, shell, Notification, profile, defaultProfile,
   getWindows: () => BrowserWindow.getAllWindows(), trustedContent,
   onStatus: notification => recordStatus({notification})});
-ipcMain.handle('codex-labels:read', event => { check(event); return cache.snapshot(); });
+ipcMain.handle('codex-labels:read', (event, knownVersion) => { check(event); return cache.snapshot(knownVersion); });
 ipcMain.handle('codex-labels:assign', (event, key, id) => {
-  check(event); const value = store.assign(key, id); cache.invalidate(); return value;
+  check(event); return cache.update(store.assign(key, id));
 });
 ipcMain.handle('codex-labels:save-config', (event, draft, revision) => {
-  check(event); const value = store.saveConfig(draft, revision); cache.invalidate(); return value;
+  check(event); return cache.update(store.saveConfig(draft, revision));
 });
 ipcMain.handle('codex-labels:report', (event, counts) => {
   check(event);
