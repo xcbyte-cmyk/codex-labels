@@ -158,7 +158,14 @@
     if(disposed||epoch!==readEpoch){read();throw Error('설정이 변경되었습니다. 다시 불러와 주세요.');}
     return next;
   }
-  function closeMenu(focus=false){menu?.remove();menu=null;menuKey=null;if(focus&&opener?.isConnected)opener.focus();}
+  function closeMenu(focus=false){menu?.remove();menu=null;menuKey=null;if(focus&&opener?.isConnected)opener.focus({preventScroll:true});}
+  function onScroll(event){
+    if(!menu)return;
+    // Streaming chat and the menu itself can scroll independently of the badge.
+    // Only an ancestor scroll can move its anchor and invalidate this position.
+    const target=event.target;
+    if(target===document||(target instanceof Element&&opener&&target.contains(opener)))closeMenu();
+  }
   function showMenu(badge){
     closeMenu();opener=badge;menuKey=badge.dataset.key;
     menu=document.createElement('div');menu.id='cdx-label-menu';menu.role='menu';menu.setAttribute('aria-label','작업 상태');
@@ -172,7 +179,7 @@
     for(const l of [...snapshot.config.labels].filter(l=>l.enabled).sort((a,b)=>a.order-b.order))add(l.name,l.backgroundColor,choose(l.id));
     add('라벨 해제',null,choose(null));add('라벨 설정…',null,()=>showSettings().catch(error));
     if(snapshot.configError){const p=document.createElement('p');p.className='notice';p.textContent='설정 오류로 마지막 정상 설정을 표시합니다: '+snapshot.configError;menu.append(p);}
-    document.body.append(menu);const r=badge.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(r.left,innerWidth-menu.offsetWidth-8))+'px';menu.style.top=Math.max(8,Math.min(r.bottom+6,innerHeight-menu.offsetHeight-8))+'px';menu.querySelector('button')?.focus();
+    document.body.append(menu);const r=badge.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(r.left,innerWidth-menu.offsetWidth-8))+'px';menu.style.top=Math.max(8,Math.min(r.bottom+6,innerHeight-menu.offsetHeight-8))+'px';menu.querySelector('button')?.focus({preventScroll:true});
   }
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
   function button(text,className,action){const node=element('button',className,text);node.type='button';if(action)node.addEventListener('click',action);return node;}
@@ -310,7 +317,7 @@
     if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();closeMenu(true);return;}
     if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();e.stopImmediatePropagation();const buttons=[...menu.querySelectorAll('button:not(:disabled)')],i=buttons.indexOf(document.activeElement);const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;buttons[next]?.focus();}
   },true);
-  document.addEventListener('scroll',()=>closeMenu(),true);window.addEventListener('resize',()=>closeMenu());
+  document.addEventListener('scroll',onScroll,true);window.addEventListener('resize',()=>closeMenu());
   async function read(){
     if(disposed)return;
     readPending=true;
@@ -344,7 +351,7 @@
   function stop(){
     disposed=true;discovery.disconnect();for(const state of rows.values())state.observer.disconnect();
     rows.clear();dirtyRows.clear();cancelAnimationFrame(frame);frame=0;clearInterval(poll);unsubscribe?.();unsubscribe=undefined;
-    window.removeEventListener('focus',read);document.removeEventListener('visibilitychange',visible);
+    window.removeEventListener('focus',read);document.removeEventListener('visibilitychange',visible);document.removeEventListener('scroll',onScroll,true);
   }
   function visible(){if(!document.hidden)read();}
   let unsubscribe,poll;

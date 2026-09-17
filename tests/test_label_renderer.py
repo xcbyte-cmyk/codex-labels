@@ -233,6 +233,48 @@ class LabelRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('fixture.work().badgeWrites'), ['first'])
         self.assertEqual(self.badge('second').inner_text(), '＋')
 
+    def test_streaming_chat_scroll_keeps_label_menu_clickable(self):
+        self.start()
+        self.page.evaluate('''() => {
+            const chat = document.querySelector('#chat');
+            chat.style.cssText = 'position:fixed;left:400px;top:0;width:300px;height:100px;overflow:auto';
+            const content = document.createElement('div'); content.style.height = '2000px';
+            chat.append(content);
+        }''')
+        self.badge().click()
+        self.page.evaluate('''async () => {
+            const chat = document.querySelector('#chat');
+            for (let i = 0; i < 4; i++) {
+                chat.firstElementChild.style.height = (2100 + i * 100) + 'px';
+                chat.scrollTop = chat.scrollHeight;
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            }
+        }''')
+        self.settle()
+        self.assertEqual(self.page.locator('#cdx-label-menu').count(), 1)
+        self.page.get_by_role('menuitem', name='진행', exact=True).click()
+        self.settle()
+        self.assertEqual(self.badge().inner_text(), '진행')
+
+    def test_menu_scroll_stays_open_but_sidebar_scroll_closes_it(self):
+        self.start()
+        self.page.evaluate('''() => {
+            const sidebar = document.querySelector('#sidebar');
+            sidebar.style.cssText = 'width:300px;height:100px;overflow:auto';
+            const spacer = document.createElement('div'); spacer.style.height = '1000px';
+            sidebar.append(spacer);
+        }''')
+        self.badge().click()
+        self.page.evaluate('''() => {
+            const menu = document.querySelector('#cdx-label-menu');
+            menu.style.maxHeight = '100px'; menu.scrollTop = menu.scrollHeight;
+        }''')
+        self.settle()
+        self.assertEqual(self.page.locator('#cdx-label-menu').count(), 1)
+        self.page.evaluate("document.querySelector('#sidebar').scrollTop = 200")
+        self.settle()
+        self.assertEqual(self.page.locator('#cdx-label-menu').count(), 0)
+
     def test_unchanged_conditional_read_does_not_touch_rows(self):
         self.start()
         count = self.page.evaluate('fixture.reads.length')
