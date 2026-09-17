@@ -196,21 +196,62 @@ def create_shortcut(root, destination=None):
         raise RuntimeError('바로가기는 배포 ZIP의 실행 도구에서 만들 수 있습니다.')
     # Environment lookup also supports a OneDrive-redirected Desktop. Do not
     # replace a shortcut owned by another copy or application.
+    # WScript.Shell's TargetPath setter can reject Korean paths on an English
+    # Windows installation. Use the explicit Unicode Shell Link COM interface.
     script = """
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+[ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+class LabelsShellLinkObject { }
+[ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface LabelsShellLinkW {
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+    void GetIDList(out IntPtr id);
+    void SetIDList(IntPtr id);
+    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetHotkey(out short key);
+    void SetHotkey(short key);
+    void GetShowCmd(out int command);
+    void SetShowCmd(int command);
+    void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count, out int index);
+    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string value, int index);
+    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string value, uint reserved);
+    void Resolve(IntPtr window, uint flags);
+    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string value);
+}
+public static class LabelsShortcut {
+    public static void Save(string destination, string target, string directory, string icon) {
+        object instance = new LabelsShellLinkObject();
+        try {
+            var link = (LabelsShellLinkW)instance;
+            var file = (IPersistFile)instance;
+            if (File.Exists(destination)) {
+                file.Load(destination, 0);
+                var path = new StringBuilder(32768); var arguments = new StringBuilder(32768);
+                link.GetPath(path, path.Capacity, IntPtr.Zero, 4);
+                link.GetArguments(arguments, arguments.Capacity);
+                if (!String.Equals(path.ToString(), target, StringComparison.OrdinalIgnoreCase) || arguments.ToString() != "launch")
+                    throw new InvalidOperationException("다른 실행본의 Codex Labels 바로가기가 이미 있습니다. 실행.cmd를 사용하세요.");
+            }
+            link.SetPath(target); link.SetArguments("launch"); link.SetWorkingDirectory(directory);
+            link.SetShowCmd(7); link.SetDescription("Codex Labels 실행"); link.SetIconLocation(icon, 0);
+            file.Save(destination, true);
+        } finally { Marshal.FinalReleaseComObject(instance); }
+    }
+}
+'@
     $destination = $env:LABELS_LINK_DEST
     if (-not $destination) { $destination = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Codex Labels.lnk' }
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($destination)
-    if ((Test-Path -LiteralPath $destination) -and (($link.TargetPath -ne $env:LABELS_HELPER_PATH) -or ($link.Arguments -ne 'launch'))) {
-        throw '다른 실행본의 Codex Labels 바로가기가 이미 있습니다. 설치는 완료됐으며 실행.cmd를 사용하세요.'
-    }
-    $link.TargetPath = $env:LABELS_HELPER_PATH
-    $link.Arguments = 'launch'
-    $link.WorkingDirectory = $env:LABELS_ROOT_PATH
-    $link.WindowStyle = 7
-    $link.Description = 'Codex Labels 실행'
-    $link.IconLocation = $env:LABELS_ICON_PATH
-    $link.Save()
+    [LabelsShortcut]::Save($destination, $env:LABELS_HELPER_PATH, $env:LABELS_ROOT_PATH, $env:LABELS_ICON_PATH)
     $destination
     """
     return powershell(script, {'LABELS_HELPER_PATH': str(helper), 'LABELS_ROOT_PATH': str(root),
