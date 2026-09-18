@@ -10,6 +10,12 @@ const {createNotifications} = require('./codex-labels/notifications.cjs');
 const {configDirectory: installedConfigDirectory} = require('./codex-labels-location.json');
 const {resolveAccount, disabledNotifications} = require('./codex-labels/account-profile.cjs');
 const accountProfile = resolveAccount(installedConfigDirectory);
+// The copied runtime has no MSIX package identity. Use its bundled CLI
+// after account environment selection, before the upstream bootstrap runs.
+if (process.platform === 'win32') {
+  process.env.CODEX_CLI_PATH = path.join(process.resourcesPath, 'codex.exe');
+  process.env.CODEX_APP_SERVER_FORCE_CLI = '1';
+}
 const windowTitle = accountProfile ? `Codex Labels · ${accountProfile.name}` : 'Codex Labels';
 // Installer smoke uses a fresh config, profile and CODEX_HOME, never account data.
 const smokeDirectory = process.env.CODEX_LABELS_SMOKE_DIRECTORY;

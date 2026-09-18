@@ -62,7 +62,7 @@ def find_source(explicit=None):
         except (ValueError, KeyError, OSError, RuntimeError):
             continue
     raise RuntimeError('지원하는 공식 Codex 설치본을 찾지 못했습니다. '
-        '이 패키지는 Store 26.911.7940.0 / 내부 앱 ' + builder.SUPPORTED_APP_VERSION +
+        '이 패키지는 ' + builder.VERSION + ' / 내부 앱 ' + builder.SUPPORTED_APP_VERSION +
         '용입니다. 다른 버전은 호환 패키지가 필요합니다. 원본 앱은 변경하지 않았습니다.')
 
 
