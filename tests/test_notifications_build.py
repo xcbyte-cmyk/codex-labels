@@ -46,7 +46,7 @@ class NotificationBuildTests(unittest.TestCase):
         target = self.root/'patched.asar'
         names = builder.build_asar(self.archive, target, self.project)
         result = read_archive(target)
-        self.assertEqual(len(names), 10)
+        self.assertEqual(len(names), 7 + len(builder.EXTRA_EXTENSION_FILES))
         for name in builder.EXTRA_EXTENSION_FILES:
             data, meta = result['.vite/build/codex-labels/' + name]
             self.assertEqual(data, (SOURCE_ROOT/'extension'/name).read_bytes())
@@ -76,7 +76,7 @@ class NotificationBuildTests(unittest.TestCase):
     def test_successful_staged_build_publishes_receipt_but_no_false_live_verification(self):
         before = self.archive.read_bytes()
         target, names = builder.prepare_runtime(self.source, self.project)
-        self.assertEqual(len(names), 10)
+        self.assertEqual(len(names), 7 + len(builder.EXTRA_EXTENSION_FILES))
         self.assertTrue((target/'resources/app.asar').is_file())
         receipt = json.loads((target/'codex-labels-build.json').read_text(encoding='utf-8'))
         self.assertEqual(receipt['version'], 3)

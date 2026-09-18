@@ -90,12 +90,11 @@ test('broken external config remains untouched and is not saved using last good 
   assert.equal(fs.existsSync(path.join(dir,'labels.json.bak')),false);
 });
 
-test('IDs cannot be added, removed, duplicated or renamed in settings',t=>{
+test('existing IDs cannot be removed, duplicated or renamed in settings',t=>{
   const {dir,store}=fixture(t);
   const opened=store.snapshot();
   const before=fs.readFileSync(path.join(dir,'labels.json'));
   for(const change of [
-    draft=>draft.labels.push({...draft.labels[0],id:'new_label'}),
     draft=>draft.labels.pop(),
     draft=>draft.labels[1].id=draft.labels[0].id,
     draft=>draft.labels[0].id='renamed'
@@ -103,6 +102,34 @@ test('IDs cannot be added, removed, duplicated or renamed in settings',t=>{
     const draft=structuredClone(opened.config);
     change(draft);
     assert.throws(()=>store.saveConfig(draft,opened.configRevision),/라벨 ID/);
+    assert.deepEqual(fs.readFileSync(path.join(dir,'labels.json')),before);
+  }
+});
+
+test('new labels persist, preserve existing assignments and can be assigned after reopening',t=>{
+  const {dir,store}=fixture(t);
+  store.assign('thread:local:local:existing','in_progress');
+  const before=fs.readFileSync(path.join(dir,'assignments.json'));
+  const opened=store.snapshot();
+  opened.config.labels.push({id:'custom_label',name:'대기',backgroundColor:'#AABBCC',textColor:'#112233',description:'추가 상태',enabled:true,order:60,untrustedExtra:'discard'});
+  store.saveConfig(opened.config,opened.configRevision);
+  assert.deepEqual(fs.readFileSync(path.join(dir,'assignments.json')),before);
+  const reopened=createStore(dir);
+  assert.equal(reopened.snapshot().config.labels.length,6);
+  assert.equal(reopened.snapshot().config.labels.at(-1).untrustedExtra,undefined);
+  assert.equal(reopened.assign('thread:local:local:new','custom_label').assignments['thread:local:local:new'],'custom_label');
+});
+
+test('new labels obey validation and maximum count without changing the file',t=>{
+  const {dir,store}=fixture(t);const opened=store.snapshot();
+  const before=fs.readFileSync(path.join(dir,'labels.json'));
+  for(const change of [
+    draft=>draft.labels.push({...draft.labels[0],id:'invalid:id'}),
+    draft=>draft.labels.push({...draft.labels[0],id:'new_label',backgroundColor:'red'}),
+    draft=>{while(draft.labels.length<=100)draft.labels.push({...draft.labels[0],id:'extra_'+draft.labels.length});}
+  ]){
+    const draft=structuredClone(opened.config);change(draft);
+    assert.throws(()=>store.saveConfig(draft,opened.configRevision));
     assert.deepEqual(fs.readFileSync(path.join(dir,'labels.json')),before);
   }
 });

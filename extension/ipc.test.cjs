@@ -39,6 +39,7 @@ function mainHarness(t) {
         return cache;
       }};
       if (name === './codex-labels/notifications.cjs') return {createNotifications: () => notifications};
+      if (name === './codex-labels/updates.cjs') return {createUpdater: () => ({check: () => ({available:false}), stage: () => ({pendingRestart:true}), status: () => ({}), restart: () => ({restarting:true})})};
       if (name === './codex-labels-location.json') return {configDirectory: path.resolve('fixture', 'config')};
       return require(name);
     }
@@ -54,7 +55,7 @@ function mainHarness(t) {
 }
 test('all new IPC operations reject foreign frames, origins and preload scripts', t => {
   const h = mainHarness(t);
-  for (const channel of ['codex-labels:read', 'codex-labels:assign', 'codex-labels:save-config', 'codex-labels:notify-thread', 'codex-labels:notification-status', 'codex-labels:activation-ready', 'codex-labels:activation-ack']) {
+  for (const channel of ['codex-labels:read', 'codex-labels:assign', 'codex-labels:save-config', 'codex-labels:notify-thread', 'codex-labels:notification-status', 'codex-labels:activation-ready', 'codex-labels:activation-ack', 'codex-labels:update-check', 'codex-labels:update-stage', 'codex-labels:update-status', 'codex-labels:restart-update']) {
     for (const event of [h.event('https://example.com'), h.event('app://evil/'), h.event('file:///tmp/foreign.html'), h.event('app://-/', false)]) {
       assert.throws(() => h.handlers.get(channel)(event, {}), /접근할 수 없는/);
     }

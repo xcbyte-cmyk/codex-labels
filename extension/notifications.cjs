@@ -1,7 +1,8 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const {SCHEME, APP_ID, TOAST_CLSID, parseActivation, notificationInput,
+const {createShortcutAdapter} = require('./windows-shortcuts.cjs');
+const {SCHEME, APP_ID, TOAST_CLSID, parseActivation, activationUri, notificationInput,
   toastXml, activationQueue, boundedDedupe} = require('./notification-core.cjs');
 
 // Dependency injection keeps tests off the real registry/notification system.
@@ -15,12 +16,13 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   const own = new WeakSet();
   const sent = boundedDedupe({now, ttlMs: 5000});
   const rate = [];
+  const shortcuts = createShortcutAdapter(shell);
   const state = {enabled: false, protocolRegistered: false, nativeHook: false,
     handleActivationAvailable: typeof Notification?.handleActivation === 'function',
     toastClsidAvailable: typeof app.setToastActivatorCLSID === 'function',
     nativeShown: 0, nativeClicked: 0, managedShown: 0, activations: 0,
     lastResult: 'registration-needed'};
-  let disposed = false, restoreHook = () => {}, lastDelivery = null;
+  let disposed = false, restoreHook = () => {}, lastDelivery = null, toastIdentityApplied = false;
   const protocolArgs = [`--user-data-dir=${profile}`, '--'];
   const shortcut = platform === 'win32' ? path.join(app.getPath('appData'),
     'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Codex Labels.lnk') : null;
@@ -28,14 +30,20 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   function update(patch) { Object.assign(state, patch); onStatus({...state}); }
   function ownedShortcut() {
     try {
-      const link = shell.readShortcutLink(shortcut);
+      const link = shortcuts.read(shortcut);
       return link.appUserModelId === APP_ID && samePath(link.target, executable);
     } catch { return false; }
   }
   function applyIdentity() {
     if (platform !== 'win32' || !state.enabled) return;
     app.setAppUserModelId(APP_ID);
-    if (state.toastClsidAvailable) app.setToastActivatorCLSID(TOAST_CLSID);
+    if (state.toastClsidAvailable && !toastIdentityApplied) {
+      app.setToastActivatorCLSID(TOAST_CLSID);
+      // Native Owl registers only the bare executable. COM cold starts must use
+      // the Labels profile before Chromium selects its single-instance target.
+      shortcuts.configureActivator({executable, profile, appId: APP_ID, clsid: TOAST_CLSID});
+      toastIdentityApplied = true;
+    }
   }
   function refreshIdentity() {
     if (platform !== 'win32') { update({lastResult: 'windows-only'}); return; }
@@ -48,7 +56,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     if (platform !== 'win32') throw Error('Windows에서만 알림을 등록할 수 있습니다.');
     if (!samePath(profile, defaultProfile)) throw Error('사용자 지정 테스트 프로필에서는 Windows 등록을 변경하지 않습니다.');
     if (io.existsSync(shortcut)) {
-      const old = shell.readShortcutLink(shortcut);
+      const old = shortcuts.read(shortcut);
       // Explicit registration may move an OWNED Labels shortcut to a new clone.
       if (old.appUserModelId !== APP_ID) throw Error('같은 이름의 다른 바로가기는 덮어쓰지 않습니다.');
     }
@@ -56,7 +64,7 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     const details = {target: executable, cwd: path.dirname(executable),
       args: `--user-data-dir="${profile}"`, description: 'Codex Labels',
       appUserModelId: APP_ID, toastActivatorClsid: TOAST_CLSID};
-    if (!shell.writeShortcutLink(shortcut, io.existsSync(shortcut) ? 'update' : 'create', details)) {
+    if (!shortcuts.write(shortcut, io.existsSync(shortcut) ? 'update' : 'create', details)) {
       throw Error('Codex Labels 바로가기 등록에 실패했습니다.');
     }
     if (!app.setAsDefaultProtocolClient(SCHEME, executable, protocolArgs)) {
@@ -64,13 +72,17 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     }
     refreshIdentity();
     if (!state.enabled || !state.protocolRegistered) throw Error('Windows 알림 등록 결과를 확인할 수 없습니다.');
+    update({registrationError: null});
     installNativeHook();
   }
   function unregister() {
     if (platform !== 'win32') return;
     if (app.isDefaultProtocolClient(SCHEME, executable, protocolArgs) &&
       !app.removeAsDefaultProtocolClient(SCHEME, executable, protocolArgs)) throw Error('프로토콜 해제에 실패했습니다.');
-    if (ownedShortcut()) io.unlinkSync(shortcut);
+    if (ownedShortcut()) {
+      shortcuts.removeActivator({executable, profile, appId: APP_ID, clsid: TOAST_CLSID});
+      io.unlinkSync(shortcut);
+    }
     restoreHook();
     update({enabled: false, protocolRegistered: false, nativeHook: false, lastResult: 'unregistered-restart-required'});
   }
@@ -105,7 +117,14 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
   function activate(uri) {
     if (disposed) return false;
     let value;
-    try { value = parseActivation(uri); } catch { update({lastResult: 'invalid-activation'}); return false; }
+    try { value = parseActivation(uri); } catch (error) {
+      let activationShape = null;
+      try { const u = new URL(uri); activationShape = {scheme: u.protocol === SCHEME + ':',
+        host: u.hostname === 'activate', path: u.pathname === '' ? 'empty' : u.pathname === '/' ? 'slash' : 'other',
+        keys: [...u.searchParams.keys()].filter(k => ['v','threadId','hostId','kind','eventId'].includes(k)),
+        parameterCount: [...u.searchParams].length}; } catch {}
+      update({lastResult: 'invalid-activation', activationError: String(error?.message || 'parse failed'), activationShape}); return false;
+    }
     if (!queue.enqueue(value)) return false;
     // Cancel work still waiting in a previously targeted window. Rejecting its
     // eventual ACK alone would not prevent an obsolete row.click() there.
@@ -126,7 +145,11 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
       try {
         if (args.includes('--codex-labels-unregister-notifications')) unregister();
         else register();
-      } catch { update({lastResult: 'registration-failed'}); }
+      } catch (error) {
+        // Registration receives no notification content. Keep its actionable
+        // local error instead of hiding runtime API/shortcut incompatibilities.
+        update({lastResult: 'registration-failed', registrationError: String(error?.message || error).slice(0, 500)});
+      }
     }
     for (const arg of args) if (typeof arg === 'string' && arg.startsWith(`${SCHEME}:`)) activate(arg);
   }
@@ -191,7 +214,9 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     notice.on('close', event => {
       if (event?.reason === 'userCanceled' || event?.reason === 'applicationHidden') live.delete(n.eventId);
     });
-    // No competing instance click listener: the registered protocol is the sole route.
+    // Some compatible runtimes deliver a native click even for protocol XML.
+    // Both routes use the same eventId and the activation queue deduplicates them.
+    notice.on('click', () => activate(activationUri(n)));
     try { notice.show(); } catch (error) { live.delete(n.eventId); throw error; }
     while (live.size > 64) {
       const id = live.keys().next().value;
@@ -212,6 +237,9 @@ function createNotifications({app, shell, Notification, getWindows, trustedConte
     if (!queue.pending && ['waiting-for-renderer', 'delivered-to-renderer'].includes(state.lastResult)) update({lastResult: 'activation-expired'});
   }, 5000);
   sweep.unref?.();
+  // Identity must be set before upstream bootstrap initializes native toasts.
+  // Waiting for whenReady is too late on the supported Owl runtime.
+  try { refreshIdentity(); installNativeHook(); } catch { update({lastResult: 'initialization-failed'}); }
   const initialized = app.whenReady().then(() => {
     if (disposed) return;
     try { refreshIdentity(); installNativeHook(); processArgs(argv); } catch { update({lastResult: 'initialization-failed'}); }

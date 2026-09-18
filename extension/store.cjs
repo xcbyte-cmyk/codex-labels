@@ -62,16 +62,21 @@ function createStore(directory) {
     if (current.revision !== expectedRevision) throw conflict();
     const changes = new Map();
     for (const label of draft.labels) {
-      if (!isObject(label) || typeof label.id !== 'string' || changes.has(label.id)) throw Error('기존 라벨 ID는 추가·삭제·변경할 수 없습니다.');
+      if (!isObject(label) || typeof label.id !== 'string' || changes.has(label.id)) throw Error('라벨 ID가 올바르지 않거나 중복됩니다.');
       changes.set(label.id,label);
     }
-    if (changes.size !== current.value.labels.length || current.value.labels.some(label=>!changes.has(label.id))) throw Error('기존 라벨 ID는 추가·삭제·변경할 수 없습니다.');
+    if (current.value.labels.some(label=>!changes.has(label.id))) throw Error('기존 라벨 ID는 삭제·변경할 수 없습니다.');
+    if (changes.size > 100) throw Error('라벨은 최대 100개까지 추가할 수 있습니다.');
     const next = clone(current.value);
     next.labels = next.labels.map(label => {
       const change = changes.get(label.id);
       for (const key of LABEL_FIELDS) label[key] = change[key];
       return label;
     });
+    const existingIds = new Set(current.value.labels.map(label => label.id));
+    for (const [id, change] of changes) {
+      if (!existingIds.has(id)) next.labels.push(Object.fromEntries(['id', ...LABEL_FIELDS].map(key => [key, change[key]])));
+    }
     for (const key of ['position','style',...APPEARANCE_BOUNDS.map(([key])=>key)]) next.appearance[key] = draft.appearance[key];
     validateConfig(next);
     const bytes = Buffer.from(JSON.stringify(next,null,2)+'\n','utf8');

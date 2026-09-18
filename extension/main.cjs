@@ -8,6 +8,9 @@ const {createStore} = require('./codex-labels-store.cjs');
 const {createSnapshotCache} = require('./codex-labels/snapshot-cache.cjs');
 const {createNotifications} = require('./codex-labels/notifications.cjs');
 const {configDirectory} = require('./codex-labels-location.json');
+const {createUpdater} = require('./codex-labels/updates.cjs');
+const updater = createUpdater(configDirectory, {quit: () => app.quit()});
+app.once('ready', () => { updater.prime().catch(() => {}); });
 // Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
 // on the SAME Labels profile, without modifying CODEX_HOME or the original app.
 const defaultProfile = process.platform === 'win32' && process.env.LOCALAPPDATA
@@ -22,9 +25,14 @@ const store = createStore(configDirectory);
 const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
 const statusPath = path.join(configDirectory, 'runtime-status.json');
 let status = {version: 3, status: 'starting', settingsAvailable: true,
+  launchToken: process.env.CODEX_LABELS_LAUNCH_TOKEN || null,
   processId: process.pid, executable: process.execPath, electronVersion: process.versions.electron || null,
   configPath: store.configPath, userDataPath: app.getPath('userData'), rows: 0, badges: 0};
 let statusTimer, ownsSharedStatus = false;
+app.on('second-instance', (_event, argv) => {
+  const token = argv?.find(value => /^--codex-labels-launch-token=[0-9a-f]{32}$/.test(value))?.split('=')[1];
+  if (token) recordStatus({recentLaunchTokens: [...(status.recentLaunchTokens || []), token].slice(-8)});
+});
 function flushStatus() {
   clearTimeout(statusTimer); statusTimer = undefined;
   const value = JSON.stringify({...status, updatedAt: new Date().toISOString()}, null, 2);
@@ -88,6 +96,10 @@ ipcMain.handle('codex-labels:report', (event, counts) => {
 ipcMain.handle('codex-labels:open-config', async event => {
   check(event); const result = await shell.openPath(store.configPath); if (result) throw Error(result); return true;
 });
+ipcMain.handle('codex-labels:update-check', event => { check(event); return updater.check(); });
+ipcMain.handle('codex-labels:update-stage', event => { check(event); return updater.stage(); });
+ipcMain.handle('codex-labels:update-status', event => { check(event); return updater.status(); });
+ipcMain.handle('codex-labels:restart-update', event => { check(event); return updater.restart(); });
 ipcMain.handle('codex-labels:notify-thread', (event, value) => { check(event); return notifications.notify(value); });
 ipcMain.handle('codex-labels:notification-status', event => { check(event); return notifications.status(); });
 ipcMain.handle('codex-labels:activation-ready', event => { check(event); ownsSharedStatus = true; notifications.rendererReady(event.sender); return true; });

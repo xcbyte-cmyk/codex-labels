@@ -10,6 +10,14 @@ test('activation round-trips the entire identity, not just a title or thread id'
   assert.ok(Object.isFrozen(route(base)));
 });
 
+test('Windows canonical root slash is accepted without allowing arbitrary paths', () => {
+  const uri=activationUri(base).replace('activate?', 'activate/?');
+  assert.deepEqual(parseActivation(uri),base);
+  for (const path of ['//','/path/','/%2f','/../path/']) {
+    assert.throws(()=>parseActivation(uri.replace('activate/?','activate'+path+'?')));
+  }
+});
+
 test('actual Codex remote host formats survive notification and URI round trips', () => {
   const hosts = ['local', 'custom-host-1', 'remote-ssh-discovered:qa-runner',
     'remote-control:workspace-42', 'remote-wsl:Ubuntu-24.04',

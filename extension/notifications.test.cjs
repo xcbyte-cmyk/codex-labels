@@ -83,10 +83,12 @@ test('native hook keeps existing click callbacks and focuses a Labels-owned wind
   assert.equal(clicks, 1); assert.equal(h.service.status().nativeShown, 2);
   assert.equal(h.service.status().nativeClicked, 1); assert.equal(n.listenerCount('click'), 2);
 });
-test('managed notices use protocol XML without a competing instance-click route', async t => {
+test('managed protocol and native clicks share one deduplicated route', async t => {
   const h = await harness(t); h.service.register(); const result = h.service.notify({...thread, title: 'test'});
   assert.equal(result.accepted, true); assert.match(h.shown[0].options.toastXml, /activationType="protocol"/);
-  assert.equal(h.shown[0].listenerCount('click'), 0); assert.equal(h.service.status().managedShown, 1);
+  assert.equal(h.shown[0].listenerCount('click'), 1); assert.equal(h.service.status().managedShown, 1);
+  h.shown[0].emit('click'); h.shown[0].emit('click');
+  assert.equal(h.service.status().activations, 1);
 });
 test('explicit routing works without Notification.handleActivation', async t => {
   const h = await harness(t); h.service.register(); assert.equal(h.service.status().handleActivationAvailable, false);
@@ -131,6 +133,14 @@ test('registration requests from a different copy cannot redirect an already-run
   const h = await harness(t);
   h.app.emit('second-instance', {}, ['another.exe', '--codex-labels-register-notifications']);
   assert.equal(h.calls.length, 0); assert.equal(h.service.status().lastResult, 'profile-in-use-by-another-copy');
+});
+
+test('startup registration failures retain the actionable local error', async t => {
+  const executable=path.resolve('fixture','ChatGPT.exe');
+  const h=await harness(t, {argv:[executable,'--codex-labels-register-notifications'],
+    shell:{readShortcutLink(){throw Error('missing');},writeShortcutLink(){throw Error('shortcut failure');}}});
+  assert.equal(h.service.status().lastResult,'registration-failed');
+  assert.equal(h.service.status().registrationError,'shortcut failure');
 });
 test('malicious activation links never navigate or execute commands', async t => {
   const h = await harness(t); h.service.rendererReady(h.windows[0].webContents);

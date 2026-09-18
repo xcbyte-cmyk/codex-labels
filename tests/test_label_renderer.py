@@ -151,6 +151,21 @@ class LabelRendererTests(unittest.TestCase):
             ['thread:local:local:first', 'in_progress'], ['thread:local:local:first', None],
             ['project:C:/workspace/demo', 'in_review']])
 
+    def test_label_stays_fixed_outside_moving_title_marquee(self):
+        self.start("""
+            const row=addRow('first'); row.style.cssText='display:flex;width:260px';
+            row.querySelector('.task-title').outerHTML='<span data-marquee-text style="min-width:0;overflow:hidden;flex:1"><span data-marquee-content style="display:block;white-space:nowrap">first</span></span>';
+        """)
+        badge=self.badge()
+        before=badge.bounding_box()
+        self.page.locator('[data-marquee-content]').evaluate("e=>e.style.transform='translateX(-90px)'")
+        self.page.locator('[data-marquee-text]').hover()
+        self.settle()
+        self.assertAlmostEqual(badge.bounding_box()['x'],before['x'],delta=0.5)
+        self.assertFalse(badge.evaluate("e=>!!e.closest('[data-marquee-text]')"))
+        self.choose('진행')
+        self.assertEqual(badge.inner_text(),'진행')
+
     def test_recycled_row_identity_and_replaced_title_are_refreshed(self):
         self.start("""
             addRow('first');
@@ -283,6 +298,209 @@ class LabelRendererTests(unittest.TestCase):
         self.settle()
         self.assertEqual(self.page.evaluate('fixture.reads.at(-1)'), 's1')
         self.assertEqual(self.page.evaluate('fixture.work()'), {'scans': {}, 'badgeWrites': []})
+
+    def test_add_label_save_reopen_and_assign(self):
+        self.start()
+        self.choose('라벨 설정…')
+        self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        name=self.page.locator('#cdx-label-settings input[name="name"]')
+        self.assertEqual(name.input_value(),'새 라벨')
+        name.fill('확인 대기')
+        self.page.get_by_role('textbox',name='배경색 HEX',exact=True).fill('#AA33CC')
+        self.page.get_by_role('button',name='저장',exact=True).click()
+        self.page.locator('#cdx-label-settings').wait_for(state='detached')
+        self.assertEqual(self.page.evaluate('fixture.data.config.labels.length'),6)
+        self.choose('확인 대기')
+        self.assertEqual(self.badge().inner_text(),'확인 대기')
+        self.choose('라벨 설정…')
+        self.page.get_by_role('button',name='확인 대기',exact=True).click()
+        self.assertEqual(name.input_value(),'확인 대기')
+        self.assertEqual(self.page.get_by_role('textbox',name='배경색 HEX',exact=True).input_value(),'#AA33CC')
+
+    def test_manual_update_check_download_and_restart_message_preserve_label_draft(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.updateCalls=[];
+            codexLabels.checkUpdate=async()=>{fixture.updateCalls.push('check');return {currentVersion:'0.2.0',latestVersion:'0.3.0',available:true};};
+            codexLabels.stageUpdate=async()=>{fixture.updateCalls.push('stage');return {currentVersion:'0.2.0',downloadedVersion:'0.3.0',latestVersion:'0.3.0',available:false,pendingRestart:true};};
+        }''')
+        self.choose('라벨 설정…')
+        name=self.page.locator('#cdx-label-settings input[name="name"]')
+        name.fill('편집 중인 라벨')
+        self.page.get_by_text('Codex Labels 업데이트',exact=True).click()
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),[])
+        self.page.get_by_role('button',name='업데이트 확인',exact=True).click()
+        self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용',exact=True).click()
+        self.assertIn('적용 준비 완료',self.page.get_by_role('status').inner_text())
+        self.assertIn('다시 실행',self.page.get_by_role('status').inner_text())
+        self.assertEqual(name.input_value(),'편집 중인 라벨')
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['check','stage'])
+        self.assertFalse(self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용').is_visible())
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+
+    def test_update_error_retry_and_current_version(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            let calls=0;
+            codexLabels.checkUpdate=async()=>{if(++calls===1)throw Error('네트워크 연결 실패');return {currentVersion:'0.2.0',latestVersion:'0.1.0',available:false};};
+            codexLabels.stageUpdate=async()=>{throw Error('should not download');};
+        }''')
+        self.choose('라벨 설정…')
+        self.page.get_by_text('Codex Labels 업데이트',exact=True).click()
+        check=self.page.get_by_role('button',name='업데이트 확인',exact=True)
+        check.click()
+        self.assertIn('네트워크 연결 실패',self.page.get_by_role('status').inner_text())
+        self.assertTrue(check.is_enabled())
+        check.click()
+        self.assertIn('설치할 새 정식 버전이 없습니다',self.page.get_by_role('status').inner_text())
+        self.assertFalse(self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용').is_visible())
+
+    def test_original_codex_change_shows_notice_only_and_check_is_explicit(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.updateCalls=[];
+            const status={currentVersion:'0.2.2',downloadedVersion:'0.2.2',pendingRestart:false,codex:{state:'changed',baseVersion:'26.911.61220',installedVersion:'27.100.1',newer:true}};
+            codexLabels.updateStatus=async()=>{fixture.updateCalls.push('local');return status;};
+            codexLabels.checkUpdate=async()=>{fixture.updateCalls.push('check');return {...status,available:false,latestVersion:'0.2.2'};};
+            codexLabels.stageUpdate=async()=>{throw Error('must not download');};
+            codexLabels.restartUpdate=async()=>{throw Error('must not restart');};
+        }''')
+        self.choose('라벨 설정…')
+        notice=self.page.locator('#cdx-codex-notice')
+        self.assertTrue(notice.is_visible())
+        self.assertIn('새 Codex 버전 감지됨',notice.inner_text())
+        self.assertIn('호환성은 아직 확인되지 않았습니다',notice.inner_text())
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['local'])
+        self.assertFalse(self.page.get_by_role('button',name='설치하고 다시 실행',exact=True).is_visible())
+        self.page.get_by_role('button',name='Labels 업데이트 확인',exact=True).click()
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['local','check'])
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+
+    def test_same_or_unknown_original_codex_version_has_no_update_notice(self):
+        self.start()
+        for state in ['same','unavailable']:
+            self.page.evaluate('''state=>{
+                codexLabels.updateStatus=async()=>({currentVersion:'0.2.2',pendingRestart:false,codex:{state}});
+                codexLabels.checkUpdate=async()=>({available:false});codexLabels.stageUpdate=async()=>({});
+            }''',state)
+            self.choose('라벨 설정…')
+            self.assertFalse(self.page.locator('#cdx-codex-notice').is_visible())
+            self.page.get_by_role('button',name='취소',exact=True).click()
+
+    def test_local_update_status_shows_pending_versions_without_network_and_restarts(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.updateCalls=[];
+            codexLabels.updateStatus=async()=>{fixture.updateCalls.push('status');return {currentVersion:'0.2.0',downloadedVersion:'0.3.0',pendingRestart:true};};
+            codexLabels.checkUpdate=async()=>{fixture.updateCalls.push('check');throw Error('unexpected network');};
+            codexLabels.stageUpdate=async()=>{fixture.updateCalls.push('stage');throw Error('already downloaded');};
+            codexLabels.restartUpdate=async()=>{fixture.updateCalls.push('restart');return {restarting:true};};
+        }''')
+        self.choose('라벨 설정…')
+        restart=self.page.get_by_role('button',name='설치하고 다시 실행',exact=True)
+        self.assertTrue(restart.is_visible())
+        self.assertTrue(restart.is_enabled())
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['status'])
+        self.assertIn('실행 중: v0.2.0 · 다운로드된 버전: v0.3.0',self.page.locator('#cdx-label-settings').inner_text())
+        self.assertIn('설치 대기',self.page.get_by_role('status').inner_text())
+        self.assertTrue(self.page.get_by_text('열린 작업이 중단될 수 있습니다. 저장하지 않은 라벨 편집 내용은 사라집니다.',exact=True).is_visible())
+        restart.click()
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['status','restart'])
+        self.assertIn('자동으로 다시 열립니다',self.page.get_by_role('status').inner_text())
+        self.assertTrue(restart.is_disabled())
+        self.assertTrue(self.page.locator('#cdx-label-settings input[name="name"]').is_disabled())
+
+    def test_downloaded_update_blocks_restart_until_label_edits_saved_or_cancelled(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.pendingUpdate=false;fixture.restarts=0;
+            codexLabels.updateStatus=async()=>({currentVersion:'0.2.0',downloadedVersion:fixture.pendingUpdate?'0.3.0':'0.2.0',pendingRestart:fixture.pendingUpdate});
+            codexLabels.checkUpdate=async()=>({currentVersion:'0.2.0',latestVersion:'0.3.0',available:true});
+            codexLabels.stageUpdate=async()=>{fixture.pendingUpdate=true;return {currentVersion:'0.2.0',downloadedVersion:'0.3.0',pendingRestart:true};};
+            codexLabels.restartUpdate=async()=>{fixture.restarts++;return {restarting:true};};
+        }''')
+        self.choose('라벨 설정…')
+        name=self.page.locator('#cdx-label-settings input[name="name"]')
+        original=name.input_value()
+        name.fill('편집한 이름')
+        self.page.get_by_text('Codex Labels 업데이트',exact=True).click()
+        self.page.get_by_role('button',name='업데이트 확인',exact=True).click()
+        self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용',exact=True).click()
+        restart=self.page.get_by_role('button',name='설치하고 다시 실행',exact=True)
+        self.assertTrue(restart.is_disabled())
+        self.assertIn('먼저 저장하거나 취소',self.page.locator('#cdx-label-settings').inner_text())
+        self.assertEqual(name.input_value(),'편집한 이름')
+        name.fill(original)
+        self.assertTrue(restart.is_enabled())
+        name.fill('저장한 이름')
+        self.page.get_by_role('button',name='저장',exact=True).click()
+        self.page.locator('#cdx-label-settings').wait_for(state='detached')
+        self.choose('라벨 설정…')
+        self.assertEqual(name.input_value(),'저장한 이름')
+        self.assertTrue(restart.is_enabled())
+        self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        self.assertTrue(restart.is_disabled())
+        self.page.get_by_role('button',name='취소',exact=True).click()
+        self.choose('라벨 설정…')
+        self.assertTrue(restart.is_enabled())
+        self.assertEqual(self.page.evaluate('fixture.data.config.labels.length'),5)
+        self.assertEqual(self.page.evaluate('fixture.restarts'),0)
+
+    def test_restart_failure_retains_download_and_allows_retry(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.restarts=0;
+            codexLabels.updateStatus=async()=>({currentVersion:'0.2.0',downloadedVersion:'0.3.0',pendingRestart:true});
+            codexLabels.checkUpdate=async()=>{throw Error('unexpected check');};
+            codexLabels.stageUpdate=async()=>{throw Error('already downloaded');};
+            codexLabels.restartUpdate=async()=>{if(++fixture.restarts===1)throw Error('설치 도구를 시작하지 못했습니다.');return {restarting:true};};
+        }''')
+        self.choose('라벨 설정…')
+        restart=self.page.get_by_role('button',name='설치하고 다시 실행',exact=True)
+        restart.click()
+        self.assertIn('다시 시도',self.page.get_by_role('status').inner_text())
+        self.assertTrue(restart.is_enabled())
+        self.assertTrue(self.page.locator('#cdx-label-settings input[name="name"]').is_enabled())
+        self.assertIn('실행 중: v0.2.0 · 다운로드된 버전: v0.3.0',self.page.locator('#cdx-label-settings').inner_text())
+        restart.click()
+        self.assertEqual(self.page.evaluate('fixture.restarts'),2)
+
+    def test_local_status_error_keeps_manual_check_and_unknown_running_version_distinct(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.updateCalls=[];
+            codexLabels.updateStatus=async()=>{fixture.updateCalls.push('status');throw Error('상태 파일을 읽지 못했습니다.');};
+            codexLabels.checkUpdate=async()=>{fixture.updateCalls.push('check');return {currentVersion:null,downloadedVersion:'0.3.0',pendingRestart:true};};
+            codexLabels.stageUpdate=async()=>{throw Error('already downloaded');};
+            codexLabels.restartUpdate=async()=>({restarting:true});
+        }''')
+        self.choose('라벨 설정…')
+        self.assertIn('업데이트 확인을 눌러 다시 시도',self.page.get_by_role('status').inner_text())
+        check=self.page.get_by_role('button',name='업데이트 확인',exact=True)
+        self.assertTrue(check.is_enabled())
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['status'])
+        check.click()
+        self.assertIn('실행 중: 버전 확인 불가 · 다운로드된 버전: v0.3.0',self.page.locator('#cdx-label-settings').inner_text())
+        self.assertTrue(self.page.get_by_role('button',name='설치하고 다시 실행',exact=True).is_enabled())
+
+    def test_add_multiple_labels_then_cancel_does_not_save(self):
+        self.start();self.choose('라벨 설정…')
+        for _ in range(2): self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        self.assertEqual(self.page.locator('.cdx-settings-nav [aria-pressed]').count(),7)
+        self.page.get_by_role('button',name='취소',exact=True).click()
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+        self.choose('라벨 설정…')
+        self.assertEqual(self.page.locator('.cdx-settings-nav [aria-pressed]').count(),5)
+
+    def test_add_first_label_to_empty_config_and_limit_at_100(self):
+        self.start("addRow('first');fixture.data.config.labels=[];")
+        self.choose('라벨 설정…')
+        self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).click()
+        self.assertEqual(self.page.locator('#cdx-label-settings input[name="name"]').input_value(),'새 라벨')
+        self.page.get_by_role('button',name='취소',exact=True).click()
+        self.page.evaluate('''()=>{const label={id:'first',name:'기본',backgroundColor:'#112233',textColor:'#FFFFFF',enabled:true,order:0,description:''};fixture.data.config.labels=Array.from({length:100},(_,i)=>({...label,id:'label_'+i}));fixture.advance(true);fixture.emit();}''')
+        self.settle();self.choose('라벨 설정…')
+        self.assertTrue(self.page.get_by_role('button',name='＋ 라벨 추가',exact=True).is_disabled())
 
     def test_config_event_preserves_settings_draft_and_applies_to_all_badges(self):
         self.start("""addRow('first'); addRow('second'); fixture.assign({

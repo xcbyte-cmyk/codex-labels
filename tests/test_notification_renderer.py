@@ -76,6 +76,15 @@ class NotificationRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('events.clicked'), [['task', 'remote-ssh-discovered:qa-runner', 'remote']])
         self.assertEqual(self.page.evaluate('events.acks'), [['e1', 'navigation-requested']])
 
+    def test_real_sidebar_kind_prefix_is_normalized_for_activation(self):
+        self.page.evaluate("addRow('local:task')")
+        self.activate(thread='task')
+        self.page.wait_for_function('events.acks.length === 1')
+        self.assertEqual(self.page.evaluate('events.clicked'), [['local:task', 'local', 'local']])
+        self.page.locator('.cdx-label').click()
+        self.page.get_by_role('menuitem', name='알림 연결 테스트').click()
+        self.assertEqual(self.page.evaluate('events.notices[0].threadId'), 'task')
+
     def test_late_mounted_row_is_navigated_once(self):
         self.activate()
         self.assertEqual(self.page.evaluate('events.clicked.length'), 0)

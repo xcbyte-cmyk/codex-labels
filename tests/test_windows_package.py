@@ -48,6 +48,11 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(run('check')['ready'])
             self.assertTrue(run('prepare')['ready'])
             self.assertTrue(run('check')['ready'])
+            local = run('update-status')
+            self.assertEqual(local['currentVersion'], package.VERSION)
+            self.assertEqual(local['downloadedVersion'], package.VERSION)
+            self.assertFalse(local['pendingRestart'])
+            self.assertIn(run('codex-status')['state'], ['same', 'changed', 'unavailable'])
             custom = b'{"custom":"preserved"}'
             (root/'labels.json').write_bytes(custom)
             receipt_path = root/'runtime/app/codex-labels-build.json'

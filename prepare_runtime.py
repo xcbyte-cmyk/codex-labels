@@ -14,7 +14,7 @@ VERSION = 'OpenAI.Codex_26.911.7940.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
 SUPPORTED_APP_VERSION = '26.911.61220'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
@@ -92,6 +92,19 @@ def build_asar(source, target, config_directory, extra=None):
             }
             for name in EXTRA_EXTENSION_FILES:
                 changed['.vite/build/codex-labels/' + name] = (ROOT/'extension'/name).read_bytes()
+            # Exact-version hooks into the existing catalog observation path.
+            # Fail closed on upstream changes; never infer active state from labels.
+            activity_bundle = 'webview/assets/app-initial-9aa16c63159e.js'
+            if activity_bundle not in original:
+                raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
+            activity_source = read(activity_bundle).decode('utf-8')
+            for variable in ('e', 'r'):
+                anchor = f'C_(o,n).observeCatalogThreads({variable})'
+                if activity_source.count(anchor) != 1:
+                    raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
+                activity_source = activity_source.replace(anchor, anchor +
+                    f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)')
+            changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
             if extra:
                 changed.update(extra)
             for name, data in changed.items():
@@ -153,7 +166,7 @@ def build_asar(source, target, config_directory, extra=None):
         temp.unlink(missing_ok=True)
 
 
-def validate_source(source):
+def source_version(source):
     archive = source/'resources/app.asar'
     if not archive.is_file() or not (source/'ChatGPT.exe').is_file():
         raise ValueError('Supported Codex installation not found. Use --source with its app directory.')
@@ -166,8 +179,15 @@ def validate_source(source):
         if base + offset + size > archive.stat().st_size:
             raise ValueError('Truncated package metadata')
         file.seek(base + offset)
-        if json.loads(file.read(size))['version'] != SUPPORTED_APP_VERSION:
-            raise ValueError('Unsupported app version. This patch supports ' + SUPPORTED_APP_VERSION + ' only.')
+        value = json.loads(file.read(size))['version']
+        if not isinstance(value, str) or not value:
+            raise ValueError('Invalid app version')
+        return value
+
+
+def validate_source(source):
+    if source_version(source) != SUPPORTED_APP_VERSION:
+        raise ValueError('Unsupported app version. This patch supports ' + SUPPORTED_APP_VERSION + ' only.')
 
 
 def prepare_config(directory):
@@ -185,9 +205,11 @@ def file_hash(file):
         return hashlib.file_digest(handle, 'sha256').hexdigest()
 
 
-def prepare_runtime(source, root=ROOT):
+def prepare_runtime(source, root=ROOT, *, destination=None, progress=None):
     source, root = Path(source).resolve(), Path(root).resolve()
-    target = root/'runtime/app'
+    target = Path(destination).resolve() if destination else root/'runtime/app'
+    if target.parent != root/'runtime' or target.name in ('', '.', '..'):
+        raise ValueError('Runtime destination must remain inside the installation runtime directory.')
     if target.exists():
         raise ValueError('runtime/app already exists. Close Labels and move it to a backup directory before rebuilding.')
     # Reject both nested directions to avoid recursive copying or copying the app into itself.
@@ -199,13 +221,15 @@ def prepare_runtime(source, root=ROOT):
     stage = root/'runtime'/('.staging-' + uuid.uuid4().hex)
     stage.parent.mkdir(parents=True, exist_ok=True)
     try:
+        if progress: progress('앱 파일을 준비하고 있습니다', 25)
         # Do not copy the ASAR only to overwrite it immediately. Unpacked resources remain intact.
         shutil.copytree(source, stage, ignore=lambda directory, names:
                         ['app.asar'] if Path(directory) == source/'resources' and 'app.asar' in names else [])
+        if progress: progress('라벨 기능을 설치하고 검증하고 있습니다', 65)
         files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root)
         if file_hash(source/'resources/app.asar') != source_hash:
             raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
-        manifest = {'version': 3, 'sourcePackage': source.parent.name, 'sourceAsarSha256': source_hash,
+        manifest = {'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
                     'patchedAsarSha256': file_hash(stage/'resources/app.asar'), 'changedArchiveFiles': files,
                     'configPath': str(root/'labels.json'), 'originalInstallModified': False,
                     'liveAppActivated': False, 'launchMode': 'side-by-side', 'nativeNotificationClickVerified': False}
@@ -215,7 +239,8 @@ def prepare_runtime(source, root=ROOT):
     finally:
         if stage.exists():
             shutil.rmtree(stage)
-    (root/'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
+    if destination is None:
+        (root/'build-manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
     return target, files
 
 

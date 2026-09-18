@@ -62,12 +62,13 @@ class WindowsHelperTests(unittest.TestCase):
         helper.prepare(self.root, self.source)
         before = (self.root/'runtime/app/resources/app.asar').read_bytes()
         self.mark_old_payload()
+        previous_manifest=(self.root/'build-manifest.json').read_bytes()
         with patch.object(builder, 'prepare_runtime', side_effect=OSError('copy failed')):
             with self.assertRaisesRegex(OSError, 'copy failed'):
                 helper.prepare(self.root, self.source)
         self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(), before)
         self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'], 'old-payload')
-        self.assertEqual(json.loads((self.root/'build-manifest.json').read_text(encoding='utf-8')), helper.read_receipt(self.root))
+        self.assertEqual((self.root/'build-manifest.json').read_bytes(), previous_manifest)
 
     def test_active_runtime_blocks_update_without_killing_process(self):
         helper.prepare(self.root, self.source)
@@ -120,15 +121,39 @@ class WindowsHelperTests(unittest.TestCase):
         helper.prepare(self.root, self.source)
         profile = self.base/'profile'
         with patch.object(helper, 'profile_path', return_value=profile), \
-                patch.dict(helper.os.environ, {'ELECTRON_RUN_AS_NODE': '1', 'CODEX_HOME': 'existing-home'}), \
+                patch.dict(helper.os.environ, {'ELECTRON_RUN_AS_NODE': '1', 'CODEX_HOME': 'existing-home', '_PYI_APPLICATION_HOME_DIR':'deleted-extraction', '_PYI_PARENT_PROCESS_LEVEL':'1'}), \
                 patch.object(helper.subprocess, 'Popen', return_value=Mock(pid=123)) as spawn:
             status = helper.launch(self.root)
         args, kwargs = spawn.call_args
-        self.assertEqual(args[0], [str(self.root.resolve()/'runtime/app/ChatGPT.exe'), '--user-data-dir=' + str(profile)])
+        self.assertEqual(args[0][:2], [str(self.root.resolve()/'runtime/app/ChatGPT.exe'), '--user-data-dir=' + str(profile)])
+        self.assertEqual(args[0][2], '--codex-labels-launch-token='+kwargs['env']['CODEX_LABELS_LAUNCH_TOKEN'])
         self.assertEqual(kwargs['env']['CODEX_HOME'], 'existing-home')
         self.assertNotIn('ELECTRON_RUN_AS_NODE', kwargs['env'])
+        self.assertFalse(any(name.startswith('_PYI_') for name in kwargs['env']))
         self.assertEqual(kwargs['env']['CODEX_ELECTRON_USER_DATA_PATH'], str(profile))
         self.assertEqual(status['status'], 'launch-requested')
+
+    def test_next_launch_applies_new_payload_and_preserves_personal_files(self):
+        helper.prepare(self.root,self.source)
+        self.mark_old_payload()
+        config=(self.root/'labels.json').read_bytes()
+        assignments=(self.root/'assignments.json').read_bytes()
+        with patch.object(helper,'find_source',return_value=self.source), \
+                patch.object(helper,'profile_path',return_value=self.base/'profile'), \
+                patch.object(helper.subprocess,'Popen',return_value=Mock(pid=123)) as spawn:
+            helper.launch(self.root)
+        spawn.assert_called_once()
+        self.assertEqual((self.root/'labels.json').read_bytes(),config)
+        self.assertEqual((self.root/'assignments.json').read_bytes(),assignments)
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'],helper.payload_fingerprint())
+
+    def test_launch_never_updates_or_kills_a_running_old_runtime(self):
+        helper.prepare(self.root,self.source);self.mark_old_payload()
+        self.running.return_value=[(self.root/'runtime/app/ChatGPT.exe').resolve()]
+        with patch.object(helper,'find_source',return_value=self.source), patch.object(helper.subprocess,'Popen') as spawn:
+            with self.assertRaisesRegex(RuntimeError,'설치하고 다시 실행'): helper.launch(self.root)
+        spawn.assert_not_called()
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'],'old-payload')
 
     def test_other_labels_copy_cannot_silently_receive_new_launch(self):
         helper.prepare(self.root, self.source)
@@ -136,7 +161,106 @@ class WindowsHelperTests(unittest.TestCase):
         with patch.object(helper.subprocess, 'Popen') as spawn:
             with self.assertRaisesRegex(RuntimeError, '다른 폴더'):
                 helper.launch(self.root)
-            spawn.assert_not_called()
+        spawn.assert_not_called()
+
+    def test_update_keeps_current_app_during_build_and_interruption(self):
+        helper.prepare(self.root,self.source);self.mark_old_payload()
+        old=(self.root/'runtime/app/resources/app.asar').read_bytes()
+        def interrupted(*args,**kwargs):
+            self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),old)
+            self.assertNotEqual(kwargs['destination'],self.root/'runtime/app')
+            raise KeyboardInterrupt()
+        with patch.object(builder,'prepare_runtime',side_effect=interrupted):
+            with self.assertRaises(KeyboardInterrupt):helper.prepare(self.root,self.source)
+        self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),old)
+
+    def test_app_reopened_during_build_prevents_final_replacement(self):
+        helper.prepare(self.root,self.source);self.mark_old_payload()
+        old=(self.root/'runtime/app/resources/app.asar').read_bytes()
+        self.running.side_effect=[[],[(self.root/'runtime/app/ChatGPT.exe').resolve()]]
+        with self.assertRaisesRegex(RuntimeError,'다시 열렸'):
+            helper.prepare(self.root,self.source)
+        self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),old)
+
+    def test_canceled_restart_never_opens_or_waits_for_parent(self):
+        root=self.root.resolve();token='a'*32
+        (root/'.restarts').mkdir(parents=True)
+        (root/'.restarts'/(token+'.cancel')).write_text('cancelled')
+        self.assertFalse(helper.wait_for_parent(123,root,token,lambda *_:None))
+
+    def test_interrupted_publish_recovers_valid_backup_but_not_foreign_config(self):
+        helper.prepare(self.root,self.source)
+        backup=self.root/'runtime/app.backup-20260101-test'
+        (self.root/'runtime/app').rename(backup)
+        helper.recover_runtime(self.root)
+        self.assertTrue((self.root/'runtime/app/ChatGPT.exe').is_file())
+        (self.root/'runtime/app').rename(backup)
+        receipt=json.loads((backup/'codex-labels-build.json').read_text(encoding='utf-8'))
+        receipt['configPath']=str(self.base/'foreign/labels.json')
+        (backup/'codex-labels-build.json').write_text(json.dumps(receipt),encoding='utf-8')
+        helper.recover_runtime(self.root)
+        self.assertFalse((self.root/'runtime/app').exists())
+
+    def test_failed_update_launches_verified_previous_runtime(self):
+        helper.prepare(self.root,self.source);self.mark_old_payload()
+        with patch.object(helper,'find_source',side_effect=RuntimeError('new Store unsupported')), \
+                patch.object(helper,'profile_path',return_value=self.base/'profile'), \
+                patch.object(helper.subprocess,'Popen',return_value=Mock(pid=123)) as spawn:
+            result=helper.launch(self.root)
+        spawn.assert_called_once()
+        self.assertEqual(result['status'],'launch-requested')
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'],'old-payload')
+
+    def test_first_launch_installs_then_opens_with_one_call(self):
+        with patch.object(helper,'find_source',return_value=self.source), \
+                patch.object(helper,'profile_path',return_value=self.base/'profile'), \
+                patch.object(helper.subprocess,'Popen',return_value=Mock(pid=123)) as spawn:
+            helper.launch(self.root)
+        spawn.assert_called_once();helper.require_ready(self.root)
+
+    def test_readiness_requires_fresh_launch_identity_and_detects_early_exit(self):
+        from datetime import datetime,timezone
+        helper.prepare(self.root,self.source)
+        process=Mock(pid=123,labels_launch_token='new-token');process.poll.return_value=1
+        status={'status':'active','processId':123,'launchToken':'old-token','updatedAt':datetime.now(timezone.utc).isoformat(),
+                'executable':str(self.root.resolve()/'runtime/app/ChatGPT.exe')}
+        helper.write_json(self.root/'runtime-status.json',status)
+        with self.assertRaisesRegex(RuntimeError,'준비되기 전에'):
+            helper.wait_until_active(self.root.resolve(),process,0,timeout=1)
+        status['launchToken']='new-token';helper.write_json(self.root/'runtime-status.json',status)
+        self.assertEqual(helper.wait_until_active(self.root.resolve(),process,0,timeout=1)['processId'],123)
+
+    def test_local_status_separates_installed_and_downloaded_versions(self):
+        helper.prepare(self.root,self.source);self.mark_old_payload()
+        receipt=helper.read_receipt(self.root);receipt['helperVersion']='0.1.0'
+        helper.write_json(self.root/'runtime/app/codex-labels-build.json',receipt)
+        state=helper.update_status(self.root)
+        self.assertEqual(state['currentVersion'],'0.1.0')
+        self.assertEqual(state['downloadedVersion'],helper.VERSION)
+        self.assertTrue(state['pendingRestart'])
+
+    def test_original_codex_version_notice_reads_newer_unsupported_install_without_patching(self):
+        helper.prepare(self.root,self.source)
+        original=(self.root/'runtime/app/resources/app.asar').read_bytes()
+        config=(self.root/'labels.json').read_bytes()
+        assignments=(self.root/'assignments.json').read_bytes()
+        with patch.object(helper,'installed_sources',return_value=[self.source]):
+            self.assertEqual(helper.codex_status(self.root)['state'],'same')
+            write_archive(self.source/'resources/app.asar',{'package.json':b'{"version":"27.100.1"}'})
+            state=helper.codex_status(self.root)
+        self.assertEqual(state,{'state':'changed','baseVersion':builder.SUPPORTED_APP_VERSION,'installedVersion':'27.100.1','newer':True})
+        self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),original)
+        self.assertEqual((self.root/'labels.json').read_bytes(),config)
+        self.assertEqual((self.root/'assignments.json').read_bytes(),assignments)
+
+    def test_original_codex_notice_supports_old_receipts_and_graceful_read_failure(self):
+        helper.prepare(self.root,self.source)
+        receipt=helper.read_receipt(self.root);receipt.pop('sourceAppVersion',None)
+        helper.write_json(self.root/'runtime/app/codex-labels-build.json',receipt)
+        with patch.object(helper,'installed_sources',return_value=[self.source]):
+            self.assertEqual(helper.codex_status(self.root)['baseVersion'],builder.SUPPORTED_APP_VERSION)
+        with patch.object(helper,'installed_sources',side_effect=RuntimeError('unavailable')):
+            self.assertEqual(helper.codex_status(self.root)['state'],'unavailable')
 
     @unittest.skipUnless(helper.sys.platform == 'win32', 'Windows mutex')
     def test_preparation_mutex_rejects_concurrent_build_and_releases(self):
