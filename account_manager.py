@@ -6,7 +6,7 @@ from tkinter import ttk, messagebox
 import account_profiles
 
 
-def run(root, launch, delete):
+def run(root, launch, delete, *, launch_default=None, close_on_launch=False):
     window = tk.Tk()
     window.title('Codex Labels · 계정별 실행')
     window.geometry('590x500'); window.minsize(550, 460)
@@ -21,6 +21,7 @@ def run(root, launch, delete):
     row = ttk.Frame(frame); row.pack(fill='x')
     name = ttk.Entry(row); name.pack(side='left', fill='x', expand=True)
     events = queue.Queue(); busy = False; poll_timer = None
+    buttons = []
 
     def refresh(selected=None):
         tree.delete(*tree.get_children())
@@ -35,17 +36,22 @@ def run(root, launch, delete):
             status.set('계정 창을 추가했습니다. 선택한 창 열기를 누르세요.')
         except Exception as error: messagebox.showerror('계정 창 추가', str(error), parent=window)
 
-    def open_selected(_event=None):
+    def start_launch(operation):
         nonlocal busy
-        selected = tree.selection()
-        if busy or not selected: return
+        if busy: return
         busy = True; set_buttons(True); status.set('선택한 계정 창을 열고 있습니다…')
         def worker():
             try:
-                result = launch(root, selected[0], progress=lambda text, _: events.put(('progress', text)))
+                result = operation(progress=lambda text, _: events.put(('progress', text)))
                 events.put(('done', result))
             except Exception as error: events.put(('error', str(error)))
         threading.Thread(target=worker, daemon=False).start()
+
+    def open_selected(_event=None):
+        selected = tree.selection()
+        if selected:
+            key = selected[0]
+            start_launch(lambda **kw: launch(root, key, **kw))
 
     def delete_selected():
         nonlocal busy
@@ -76,9 +82,16 @@ def run(root, launch, delete):
     delete_button.pack(side='left')
     open_button = ttk.Button(actions, text='선택한 창 열기', command=open_selected)
     open_button.pack(side='right')
+    buttons.extend((add_button, delete_button, open_button))
+    if launch_default:
+        default_button = ttk.Button(actions, text='기본 프로필 열기',
+                                    command=lambda: start_launch(launch_default))
+        default_button.pack(side='right', padx=8)
+        buttons.append(default_button)
     def set_buttons(disabled):
-        for button in (add_button, delete_button, open_button):
+        for button in buttons:
             button.state(['disabled'] if disabled else ['!disabled'])
+        name.state(['disabled'] if disabled else ['!disabled'])
     tree.bind('<Double-1>', open_selected)
     def poll():
         nonlocal busy, poll_timer
@@ -87,6 +100,9 @@ def run(root, launch, delete):
             if kind == 'progress': status.set(value)
             else:
                 busy = False; set_buttons(False)
+                if kind == 'done' and close_on_launch:
+                    window.destroy()
+                    return
                 if kind in ('deleted', 'error'):
                     try: refresh()
                     except Exception as error: status.set(str(error)); continue

@@ -24,7 +24,10 @@ def write_zip(executable, destination, source_commit, license_files):
     files += license_files
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
         for source, name in files:
-            archive.write(source, name)
+            if name.endswith('.cmd'):
+                archive.writestr(name, source.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
+            else:
+                archive.write(source, name)
         archive.writestr('build-info.json', json.dumps({'version': VERSION, 'sourceCommit': source_commit,
             'supportedAppVersion': builder.SUPPORTED_APP_VERSION, 'containsCodexBinaries': False}, indent=2))
 
@@ -48,7 +51,10 @@ def main():
             '--specpath', str(work), '--add-data', str(assets) + ':.', str(ROOT/'windows_helper.py')]
         subprocess.run(command, cwd=ROOT, check=True)
         from importlib.metadata import distribution
-        python_license = Path(sys.base_prefix)/'LICENSE.txt'
+        python_license = next((Path(sys.base_prefix)/name for name in ('LICENSE.txt', 'LICENSE_PYTHON.txt')
+                               if (Path(sys.base_prefix)/name).is_file()), None)
+        if python_license is None:
+            raise RuntimeError('Python runtime license file was not found.')
         distribution_info = distribution('pyinstaller')
         license_entry = next(file for file in distribution_info.files if str(file).endswith('COPYING.txt'))
         pyinstaller_license = distribution_info.locate_file(license_entry)

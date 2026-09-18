@@ -17,7 +17,7 @@ import runtime_recovery as recovery
 import prepare_runtime as builder
 import account_profiles
 
-VERSION = '0.2.4'
+VERSION = '0.3.0'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
@@ -172,6 +172,19 @@ def recover_runtime(root):
             return
 
 
+def move_runtime(source, target):
+    """Windows can briefly retain directory handles after a child exits."""
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            source.rename(target)
+            return
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (5, 32) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+
+
 def prepare(root, source=None, progress=None, *, verify_runtime=False):
     root = Path(root).resolve()
     refresh = source is None
@@ -217,9 +230,9 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
         if target.exists():
             previous = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
             recovery.checkpoint(root, previous, old_receipt, payload_fingerprint())
-            target.rename(previous)
+            move_runtime(target, previous)
             backup = previous
-        incoming.rename(target)
+        move_runtime(incoming, target)
         write_json(root/'build-manifest.json', receipt)
         recovery.prepared(root)
     except Exception:
@@ -227,14 +240,17 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
             # Preserve even an incomplete new runtime for diagnosis before restore.
             if target.exists():
                 target.rename(target.with_name('app.failed-' + uuid.uuid4().hex[:8]))
-            backup.rename(target)
+            move_runtime(backup, target)
             write_json(root/'build-manifest.json', read_receipt(root))
         raise
     finally:
         # Preserve an interrupted/failed candidate for diagnosis, never delete
         # user data or the previous runtime in this recovery path.
         if incoming.exists():
-            incoming.rename(incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
+            try:
+                move_runtime(incoming, incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
+            except OSError:
+                pass  # Keep the candidate in place and retain the original failure.
     return {'ready': True, 'root': str(root), 'backup': str(backup) if backup else None}
 
 
@@ -449,7 +465,7 @@ def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=F
         return status
 
 
-def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False):
+def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False, select_accounts=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     progress('설치 상태를 확인하고 있습니다', 5)
@@ -470,7 +486,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
             else:
                 exe = require_ready(root)
         except RuntimeError:
-            if running_apps():
+            if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
             try:
                 base = None if source is None and valid_runtime(root, root/'runtime/app') else find_source(source)
@@ -485,11 +501,14 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
                 recovery.failed(root, error, payload_fingerprint())
                 if recovery.state(root).get('tools'):
                     return recovery.schedule(root, Path(__file__))
+    if shortcut:
+        create_shortcut(root)
+    if select_accounts:
+        progress('계정 선택기를 준비했습니다', 100)
+        return {'selectorReady': True, 'updateError': update_error}
     existing = running_apps()
     if any(app != exe.resolve() for app in existing):
         raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')
-    if shortcut:
-        create_shortcut(root)
     profile = profile_path()
     profile.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -536,11 +555,21 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     return status
 
 
+def open_accounts(root):
+    import account_manager
+    data_root = account_profiles.shared_root()
+    return account_manager.run(data_root,
+        lambda _, key, **kw: launch_account(root, key, shared=True, **kw),
+        lambda _, key, **kw: delete_account(root, key, shared=True, **kw),
+        launch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, **kw),
+        close_on_launch=True)
+
+
 def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['accounts', 'account-create', 'account-list', 'account-launch', 'account-delete', 'prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
+    parser.add_argument('action', choices=['accounts', 'account-create', 'account-list', 'account-launch', 'account-delete', 'prepare', 'launch', 'launch-direct', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
     parser.add_argument('--account-id')
     parser.add_argument('--name')
     parser.add_argument('--confirm-delete', action='store_true', help='선택한 계정의 로컬 자료 영구 삭제 확인')
@@ -561,12 +590,20 @@ def main():
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
-        if args.action == 'accounts':
-            import account_manager
+        if args.action == 'accounts' or (args.action == 'launch' and not args.wait_pid):
+            def prepare_selector(progress):
+                return launch(root, source=args.source, shortcut=args.shortcut,
+                              progress=progress, select_accounts=True)
             if getattr(sys, 'frozen', False):
                 import ctypes
                 ctypes.windll.kernel32.FreeConsole()
-            return account_manager.run(root, launch_account, delete_account)
+            if not args.no_ui:
+                import launcher_ui
+                code = launcher_ui.run(prepare_selector)
+                if code:
+                    return code
+                return open_accounts(root)
+            result = prepare_selector(lambda message, percent: print(message, flush=True))
         elif args.action == 'account-create':
             if not args.name: raise ValueError('--name으로 계정 창 이름을 지정하세요.')
             result = account_profiles.create(root, args.name)
@@ -659,7 +696,7 @@ def main():
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         message = 'Codex Labels: ' + str(error)
         print(message, flush=True)
-        if args.action == 'launch' and getattr(sys, 'frozen', False):
+        if args.action == 'launch' and getattr(sys, 'frozen', False) and not args.no_ui:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'Codex Labels', 0x10)
         return 1

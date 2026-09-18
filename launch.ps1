@@ -12,6 +12,12 @@ trap {
     exit 1
 }
 if ($RegisterNotifications -and $UnregisterNotifications) { throw '등록과 해제는 동시에 요청할 수 없습니다.' }
+if (-not $CheckOnly -and -not $RegisterNotifications -and -not $UnregisterNotifications) {
+    $helperPath = Join-Path $labelRoot 'CodexLabelsHelper.exe'
+    if (Test-Path -LiteralPath $helperPath) { & $helperPath launch }
+    else { & python (Join-Path $labelRoot 'windows_helper.py') launch }
+    exit $LASTEXITCODE
+}
 $labelApp = Join-Path $labelRoot 'runtime/app/ChatGPT.exe'
 if (-not (Test-Path -LiteralPath $labelApp)) { throw '먼저 prepare_runtime.py를 실행해 앱 사본을 준비하세요.' }
 $receiptPath = Join-Path $labelRoot 'runtime/app/codex-labels-build.json'
