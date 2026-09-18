@@ -49,7 +49,7 @@
     #cdx-label-settings .cdx-settings-preview{margin-top:17px;padding:13px 15px;border:1px solid #40454d;border-radius:8px;background:#181a1d}
     #cdx-label-settings .cdx-settings-preview-row{display:flex;align-items:center;margin-top:8px;min-height:32px;color:#e4e7ec}
     #cdx-label-settings .cdx-settings-preview-badge{display:inline-flex;align-items:center;justify-content:center;line-height:1.4;font-weight:600;white-space:nowrap;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis}
-    #cdx-label-settings details{margin-top:17px;border-top:1px solid #3c3f44;padding-top:12px}#cdx-label-settings summary{cursor:pointer;color:#dbe1e9}#cdx-label-settings .cdx-settings-appearance{margin-top:12px}
+    #cdx-label-settings details,#cdx-label-settings .cdx-settings-updates{margin-top:17px;border-top:1px solid #3c3f44;padding-top:12px}#cdx-label-settings summary{cursor:pointer;color:#dbe1e9}#cdx-label-settings .cdx-settings-appearance{margin-top:12px}
     #cdx-label-settings .cdx-update-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
     #cdx-label-settings .cdx-settings-status{margin:0 24px 16px;padding:11px 13px;border:1px solid #9c7145;border-radius:7px;background:#3c3025;color:#ffd4a5;font-size:12px;overflow-wrap:anywhere}
     #cdx-label-settings .cdx-settings-status button{margin-top:8px;font-size:12px}
@@ -253,7 +253,8 @@
     const preview=element('div','cdx-settings-preview'),previewCaption=element('div','cdx-settings-help','미리보기'),previewRow=element('div','cdx-settings-preview-row'),previewBadge=element('span','cdx-settings-preview-badge'),previewHelp=element('p','cdx-settings-help');previewRow.append(previewBadge,document.createTextNode('프로젝트명'));preview.append(previewCaption,previewRow,previewHelp);editor.append(preview);
     const appearance=element('details'),appearanceTitle=element('summary',null,'배지 모양 · 모든 라벨에 적용'),appearanceFields=element('div','cdx-settings-fields cdx-settings-appearance');appearance.append(appearanceTitle,appearanceFields);editor.append(appearance);
     if(typeof api.checkUpdate==='function'&&typeof api.stageUpdate==='function'){
-      const updates=element('details'),summary=element('summary',null,'Codex Labels 업데이트');
+      const updates=element('section','cdx-settings-updates'),summary=element('strong',null,'Codex Labels 업데이트');
+      summary.id='cdx-settings-updates-title';updates.setAttribute('aria-labelledby',summary.id);
       const versions=element('p','cdx-settings-help');versions.hidden=true;
       const codexNotice=element('div','cdx-settings-preview');codexNotice.id='cdx-codex-notice';codexNotice.hidden=true;
       const codexTitle=element('strong'),codexDetail=element('p','cdx-settings-help');codexNotice.append(codexTitle,codexDetail);
@@ -281,7 +282,6 @@
         if(changed){
           codexTitle.textContent=result.codex.newer?'새 Codex 버전 감지됨':'원본 Codex 버전 변경 감지됨';
           codexDetail.textContent=`Labels 기반: ${result.codex.baseVersion} · 설치된 원본: ${result.codex.installedVersion}. 호환성은 아직 확인되지 않았습니다. 원본 업데이트를 자동으로 적용하지 않습니다.`;
-          updates.open=true;
         }
         versions.hidden=false;
         versions.textContent=`실행 중: ${result.currentVersion?'v'+result.currentVersion:'버전 확인 불가'}`;
@@ -317,8 +317,8 @@
       }
       async function readUpdateStatus(){
         busy=true;updateControls();message.textContent='이 PC의 업데이트 상태를 확인하고 있습니다…';
-        try{result=await api.updateStatus();showUpdateStatus();if(result.pendingRestart)updates.open=true;}
-        catch(error){message.textContent='이 PC의 업데이트 상태를 읽지 못했습니다. 업데이트 확인을 눌러 다시 시도해 주세요. '+(error?.message||String(error));updates.open=true;}
+        try{result=await api.updateStatus();showUpdateStatus();}
+        catch(error){message.textContent='이 PC의 업데이트 상태를 읽지 못했습니다. 업데이트 확인을 눌러 다시 시도해 주세요. '+(error?.message||String(error));}
         finally{busy=false;updateControls();}
       }
       const actions=element('div','cdx-update-actions');actions.append(check,download,restart);
