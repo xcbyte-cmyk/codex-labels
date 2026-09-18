@@ -58,6 +58,10 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(updater.release(self.current, lambda *_: b'null')[0]['available'])
         self.assertFalse((self.root/'.updates').exists())
 
+    def test_account_launcher_and_process_library_license_are_allowed(self):
+        files = {**self.files, '계정별 실행.cmd': b'fixture-launcher', 'PSUTIL-LICENSE.txt': b'fixture-license'}
+        updater.unpack(self.bundle(files), self.latest, self.supported)
+
     def test_checksum_mismatch_does_not_stage(self):
         data = self.bundle()
         for corrupt in [data+b'bad',b'XX'+data[2:]]:

@@ -15,6 +15,7 @@ import re
 import runtime_recovery as recovery
 
 import prepare_runtime as builder
+import account_profiles
 
 VERSION = '0.2.4'
 ASSETS = Path(__file__).resolve().parent
@@ -74,7 +75,7 @@ def profile_path():
 
 def running_apps():
     text = powershell("@(Get-CimInstance Win32_Process -Filter \"Name='ChatGPT.exe'\" | "
-        "Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:LABELS_PROFILE_CHECK) } | "
+        "Where-Object { $_.CommandLine -and ($_.CommandLine.Contains($env:LABELS_PROFILE_CHECK) -or $_.CommandLine.Contains('--codex-labels-account=')) } | "
         "Select-Object -ExpandProperty ExecutablePath -Unique) | ConvertTo-Json -Compress",
         {'LABELS_PROFILE_CHECK': str(profile_path())})
     values = json.loads(text) if text else []
@@ -104,7 +105,7 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'launcher_ui.py', ASSETS/'runtime_recovery.py', ASSETS/'labels.example.json']
+    files = [ASSETS/name for name in ('prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'labels.example.json')]
     files += sorted((ASSETS/'extension').glob('*.js'))
     files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
     for file in files:
@@ -383,17 +384,18 @@ def wait_for_parent(pid, root, token, progress, timeout=120):
         kernel.CloseHandle(handle)
 
 
-def wait_until_active(root, process, started, timeout=75, allow_forwarded=False):
+def wait_until_active(root, process, started, timeout=75, allow_forwarded=False, status_directory=None, account_id=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            status = json.loads((root/'runtime-status.json').read_text(encoding='utf-8'))
+            status = json.loads(((status_directory or root)/'runtime-status.json').read_text(encoding='utf-8'))
             updated = datetime.fromisoformat(status['updatedAt'].replace('Z', '+00:00')).timestamp()
             identity_matches = (status.get('launchToken') == process.labels_launch_token or
                                 process.labels_launch_token in status.get('recentLaunchTokens', []) or
                                 (not status.get('launchToken') and status.get('processId') == process.pid))
             if (status.get('status') == 'active' and identity_matches
-                    and updated >= started and Path(status['executable']).resolve() == root/'runtime/app/ChatGPT.exe'):
+                    and updated >= started and Path(status['executable']).resolve() == root/'runtime/app/ChatGPT.exe'
+                    and (account_id is None or status.get('accountProfileId') == account_id)):
                 return status
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -401,6 +403,44 @@ def wait_until_active(root, process, started, timeout=75, allow_forwarded=False)
             raise RuntimeError('Labels가 준비되기 전에 종료되었습니다. 다시 시도해 주세요.')
         time.sleep(0.2)
     raise RuntimeError('앱 화면의 준비 완료를 확인하지 못했습니다. 열린 Labels 창을 확인해 주세요.')
+
+
+def delete_account(root, account_id, *, progress=None):
+    import account_cleanup
+    root = Path(root).resolve()
+    with preparation_lock(root):
+        return account_cleanup.delete_account(root, account_id, progress=progress)
+
+
+def launch_account(root, account_id, *, progress=None, wait_ready=True):
+    root = Path(root).resolve()
+    progress = progress or (lambda *_: None)
+    # Account windows never silently fall back to the default launcher or an
+    # older runtime without account isolation support.
+    with preparation_lock(root):
+        exe = require_ready(root)
+        account, directory, profile, env = account_profiles.launch_context(root, account_id)
+        for name, initial in [('labels.json', (ASSETS/'labels.example.json').read_bytes()),
+                              ('assignments.json', b'{"schemaVersion":1,"assignments":{}}\n')]:
+            try:
+                with (directory/name).open('xb') as file: file.write(initial)
+            except FileExistsError: pass
+        progress(account['name'] + ' 창을 열고 있습니다', 80)
+        started = time.time()
+        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile),
+            '--codex-labels-account=' + account_id,
+            '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
+            env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
+    status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
+              'accountProfileId': account_id, 'profile': str(profile), 'executable': str(exe)}
+    write_json(directory/'launch-status.json', status)
+    if wait_ready:
+        active = wait_until_active(root, process, started, allow_forwarded=True,
+                                   status_directory=directory, account_id=account_id)
+        status.update(status='active', processId=active['processId'])
+        write_json(directory/'launch-status.json', status)
+    return status
 
 
 def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False):
@@ -494,7 +534,10 @@ def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
+    parser.add_argument('action', choices=['accounts', 'account-create', 'account-list', 'account-launch', 'account-delete', 'prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
+    parser.add_argument('--account-id')
+    parser.add_argument('--name')
+    parser.add_argument('--confirm-delete', action='store_true', help='선택한 계정의 로컬 자료 영구 삭제 확인')
     parser.add_argument('--root', type=Path, default=default_root())
     parser.add_argument('--source', type=Path)
     parser.add_argument('--shortcut', action='store_true')
@@ -512,7 +555,23 @@ def main():
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
-        if args.action == 'codex-status':
+        if args.action == 'accounts':
+            import account_manager
+            if getattr(sys, 'frozen', False):
+                import ctypes
+                ctypes.windll.kernel32.FreeConsole()
+            return account_manager.run(root, launch_account, delete_account)
+        elif args.action == 'account-create':
+            if not args.name: raise ValueError('--name으로 계정 창 이름을 지정하세요.')
+            result = account_profiles.create(root, args.name)
+        elif args.action == 'account-list':
+            result = {'accounts': account_profiles.list_accounts(root)}
+        elif args.action == 'account-launch':
+            result = launch_account(root, args.account_id, wait_ready=not args.no_ui)
+        elif args.action == 'account-delete':
+            if not args.confirm_delete: raise ValueError('영구 삭제하려면 --confirm-delete를 지정하세요.')
+            result = delete_account(root, args.account_id)
+        elif args.action == 'codex-status':
             result = codex_status(root)
         elif args.action == 'update-status':
             result = update_status(root)

@@ -20,7 +20,7 @@ REPO = 'xcbyte-cmyk/codex-labels'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
 MAX_DOWNLOAD = 40 * 1024 * 1024
 FILES = {'CodexLabelsHelper.exe', 'build-info.json', '설치.cmd', '실행.cmd',
-         '사용안내.txt', 'PYTHON-LICENSE.txt', 'PYINSTALLER-LICENSE.txt'}
+         '계정별 실행.cmd', '사용안내.txt', 'PYTHON-LICENSE.txt', 'PYINSTALLER-LICENSE.txt', 'PSUTIL-LICENSE.txt'}
 
 
 def version(value):

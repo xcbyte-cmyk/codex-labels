@@ -71,6 +71,10 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(result['.vite/build/early-bootstrap.js'][0].startswith(builder.MARKER))
         self.assertIn(b'codex-labels:save-config', result['.vite/build/preload.js'][0])
         self.assertIn(b'codex-labels:save-config', result['.vite/build/codex-labels-main.cjs'][0])
+        self.assertIn(b'codex-labels:vocabulary-summarize', result['.vite/build/preload.js'][0])
+        self.assertIn(b'registerVocabulary', result['.vite/build/codex-labels-main.cjs'][0])
+        for name in ('vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js'):
+            self.assertEqual(result['.vite/build/codex-labels/' + name][0], (builder.ROOT/'extension'/name).read_bytes())
         location = json.loads(result['.vite/build/codex-labels-location.json'][0])
         self.assertEqual(location['configDirectory'], str(self.root/'settings'))
         for name in changed:
