@@ -50,6 +50,7 @@ function installStaged(root, result, io = fs) {
 function createUpdater(root, {execute = execFile, install = installStaged, start = spawn, quit = () => {}, ackTimeout = 15000} = {}) {
   root = path.resolve(root);
   let active = null;
+  let checkedRelease = null;
   let originalStatus;
   let runningVersion = null;
   try { runningVersion = JSON.parse(fs.readFileSync(path.join(root, 'runtime/app/codex-labels-build.json'), 'utf8')).helperVersion || null; } catch {}
@@ -82,8 +83,16 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
       execute(helper, [action, '--root', root], {windowsHide: true, timeout: 180000, maxBuffer: 65536, encoding: 'utf8', env}, (error, stdout) => {
         if (error) return reject(Error(String(stdout || '업데이트 도구를 실행하지 못했습니다. 설치 상태와 네트워크를 확인해 주세요.').trim().slice(-1000)));
         try {
-          const value = JSON.parse(stdout.trim().split(/\r?\n/).at(-1));
-          resolve(decorate(action === 'update-stage' ? install(root, value) : value));
+          let value = JSON.parse(stdout.trim().split(/\r?\n/).at(-1));
+          if (action === 'update-stage') value = install(root, value);
+          if (action !== 'update-status' && typeof value.latestVersion === 'string') {
+            checkedRelease = {latestVersion: value.latestVersion, available: !!value.available};
+          }
+          if (action === 'update-status' && checkedRelease) {
+            value = {...checkedRelease, ...value,
+              available: checkedRelease.available && value.downloadedVersion !== checkedRelease.latestVersion};
+          }
+          resolve(decorate(value));
         } catch (failure) { reject(failure); }
       });
     }).finally(() => { active = null; });

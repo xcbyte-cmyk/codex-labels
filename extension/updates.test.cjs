@@ -78,6 +78,40 @@ test('local status reports running version separately and restart quits only aft
   assert.ok(requested.includes(String(process.pid)));
   await new Promise(resolve=>setTimeout(resolve,300));assert.equal(quits,1);
 });
+
+test('reopening local status preserves a checked release without another network check',async()=>{
+  const calls=[];let failCheck=false;
+  const updater=createUpdater('fixture',{execute(_exe,args,_options,cb){
+    const action=args[0];calls.push(action);
+    if(action==='codex-status')return cb(null,'{"state":"same"}');
+    if(action==='update-check'&&failCheck)return cb(Error('offline'),'연결 실패');
+    cb(null,JSON.stringify(action==='update-check'
+      ?{currentVersion:'0.2.1',latestVersion:'0.2.2',available:true}
+      :{currentVersion:'0.2.1',downloadedVersion:'0.2.1',pendingRestart:false}));
+  }});
+  assert.equal((await updater.status()).latestVersion,undefined);
+  await updater.check();
+  const status=await updater.status();
+  assert.equal(status.latestVersion,'0.2.2');assert.equal(status.available,true);
+  assert.equal(status.downloadedVersion,'0.2.1');assert.equal(status.pendingRestart,false);
+  assert.equal(calls.filter(action=>action==='update-check').length,1);
+  failCheck=true;await assert.rejects(updater.check(),/연결 실패/);
+  assert.equal((await updater.status()).available,true);
+});
+
+test('downloaded local state takes precedence over previously available release',async()=>{
+  let downloaded='0.2.1';
+  const updater=createUpdater('fixture',{execute(_exe,args,_options,cb){
+    if(args[0]==='codex-status')return cb(null,'{"state":"same"}');
+    cb(null,JSON.stringify(args[0]==='update-check'
+      ?{currentVersion:'0.2.1',latestVersion:'0.2.2',available:true}
+      :{currentVersion:'0.2.1',downloadedVersion:downloaded,pendingRestart:downloaded!=='0.2.1'}));
+  }});
+  await updater.check();downloaded='0.2.2';
+  const status=await updater.status();
+  assert.equal(status.available,false);assert.equal(status.pendingRestart,true);
+  assert.equal(status.latestVersion,'0.2.2');
+});
 test('missing helper acknowledgement leaves the app running and retry available',async t=>{
   const {root}=fixture(t);let quits=0;
   const updater=createUpdater(root,{ackTimeout:10,quit(){quits++;},

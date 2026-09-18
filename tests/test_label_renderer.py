@@ -387,7 +387,26 @@ class LabelRendererTests(unittest.TestCase):
             }''',state)
             self.choose('라벨 설정…')
             self.assertFalse(self.page.locator('#cdx-codex-notice').is_visible())
+            self.assertIn('공개 업데이트는 아직 확인하지 않았습니다',self.page.get_by_role('status').inner_text())
             self.page.get_by_role('button',name='취소',exact=True).click()
+
+    def test_reopening_settings_displays_previously_checked_available_release(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.checkedRelease=null;fixture.checks=0;
+            codexLabels.updateStatus=async()=>({...fixture.checkedRelease,currentVersion:'0.2.1',downloadedVersion:'0.2.1',pendingRestart:false});
+            codexLabels.checkUpdate=async()=>{fixture.checks++;return fixture.checkedRelease={latestVersion:'0.2.2',available:true};};
+            codexLabels.stageUpdate=async()=>{throw Error('must not download');};
+        }''')
+        self.choose('라벨 설정…')
+        self.assertIn('아직 확인하지 않았습니다',self.page.get_by_role('status').inner_text())
+        self.page.get_by_role('button',name='업데이트 확인',exact=True).click()
+        self.page.get_by_role('button',name='취소',exact=True).click()
+        self.choose('라벨 설정…')
+        self.assertTrue(self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용',exact=True).is_visible())
+        self.assertIn('최근 확인한 공개 버전: v0.2.2',self.page.locator('#cdx-label-settings').inner_text())
+        self.assertIn('새 버전을 다운로드할 수 있습니다',self.page.get_by_role('status').inner_text())
+        self.assertEqual(self.page.evaluate('fixture.checks'),1)
 
     def test_local_update_status_shows_pending_versions_without_network_and_restarts(self):
         self.start()
