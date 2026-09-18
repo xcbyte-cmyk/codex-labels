@@ -484,6 +484,26 @@ class LabelRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('fixture.data.config.labels.length'),5)
         self.assertEqual(self.page.evaluate('fixture.restarts'),0)
 
+    def test_rollback_is_explicit_and_disabled_while_label_draft_is_dirty(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.rollbacks=0;
+            codexLabels.updateStatus=async()=>({currentVersion:'0.2.4',rollbackAvailable:true,recoveryNotice:'이전 버전 복구 가능'});
+            codexLabels.checkUpdate=async()=>({currentVersion:'0.2.4',latestVersion:'0.2.4',available:false});
+            codexLabels.stageUpdate=async()=>{throw Error('must not download');};
+            codexLabels.rollbackUpdate=async()=>{fixture.rollbacks++;return {restarting:true};};
+        }''')
+        self.choose('라벨 설정…')
+        button=self.page.get_by_role('button',name='이전 버전으로 돌아가기',exact=True)
+        self.assertTrue(button.is_enabled())
+        name=self.page.locator('#cdx-label-settings input[name="name"]')
+        original=name.input_value();name.fill('아직 저장하지 않음')
+        self.assertTrue(button.is_disabled())
+        name.fill(original);button.click()
+        self.assertEqual(self.page.evaluate('fixture.rollbacks'),1)
+        self.assertIn('이전 버전으로 돌아갑니다',self.page.get_by_role('status').inner_text())
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+
     def test_restart_failure_retains_download_and_allows_retry(self):
         self.start()
         self.page.evaluate('''()=>{

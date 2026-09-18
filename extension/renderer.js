@@ -264,19 +264,24 @@
       let busy=false,result=null;
       const check=button('업데이트 확인',null,()=>runUpdate(false));
       const download=button('다운로드 및 다음 실행에 적용',null,()=>runUpdate(true));download.hidden=true;
-      const restart=button('설치하고 다시 실행',null,restartUpdate);restart.hidden=true;
+      const restart=button('설치하고 다시 실행',null,()=>restartUpdate());restart.hidden=true;
+      const rollback=button('이전 버전으로 돌아가기',null,()=>restartUpdate(true));rollback.hidden=true;
+      const recoveryNotice=element('p','cdx-settings-help');recoveryNotice.hidden=true;
       const hasDraft=()=>JSON.stringify(state.draft)!==state.savedConfig;
       const updateControls=()=>{
         check.disabled=busy||state.saving||state.restarting;download.disabled=check.disabled;
         download.hidden=!result?.available||!!result?.pendingRestart;
         restart.hidden=!result?.pendingRestart||typeof api.restartUpdate!=='function';
         restart.disabled=check.disabled||hasDraft()||state.conflict;
-        restartNotice.hidden=restart.hidden;
-        editNotice.hidden=restart.hidden||(!hasDraft()&&!state.conflict);
+        rollback.hidden=!result?.rollbackAvailable||typeof api.rollbackUpdate!=='function';
+        rollback.disabled=check.disabled||hasDraft()||state.conflict;
+        restartNotice.hidden=restart.hidden&&rollback.hidden;
+        editNotice.hidden=(restart.hidden&&rollback.hidden)||(!hasDraft()&&!state.conflict);
         editNotice.textContent=state.conflict?'파일 설정을 다시 불러온 뒤 설치해 주세요.':'라벨 편집 내용을 먼저 저장하거나 취소해 주세요. 저장하면 설정창을 다시 열어 설치할 수 있습니다.';
       };
       state.updateControls=updateControls;
       function showUpdateStatus(){
+        recoveryNotice.textContent=result.recoveryNotice||'';recoveryNotice.hidden=!result.recoveryNotice;
         const changed=result.codex?.state==='changed';
         codexNotice.hidden=!changed;check.textContent=changed?'Labels 업데이트 확인':'업데이트 확인';
         if(changed){
@@ -300,15 +305,15 @@
         }catch(error){message.textContent=(error?.message||String(error))+' 다시 시도해 주세요.';}
         finally{busy=false;updateControls();}
       }
-      async function restartUpdate(){
-        if(busy||state.saving||state.restarting||hasDraft()||state.conflict||!result?.pendingRestart)return;
+      async function restartUpdate(rollingBack=false){
+        if(busy||state.saving||state.restarting||hasDraft()||state.conflict||(rollingBack?!result?.rollbackAvailable:!result?.pendingRestart))return;
         state.restarting=true;busy=true;
         const controls=[...form.querySelectorAll('button,input,textarea')];controls.forEach(control=>control.disabled=true);
-        message.textContent='설치 도구를 준비하고 있습니다…';updateControls();
+        message.textContent=rollingBack?'이전 버전 복구를 준비하고 있습니다…':'설치 도구를 준비하고 있습니다…';updateControls();
         try{
-          const response=await api.restartUpdate();
+          const response=await (rollingBack?api.rollbackUpdate():api.restartUpdate());
           if(!response?.restarting)throw Error('설치 도구의 시작을 확인하지 못했습니다.');
-          message.textContent='Labels를 종료하고 업데이트를 설치합니다. 완료되면 자동으로 다시 열립니다.';
+          message.textContent=rollingBack?'Labels를 종료하고 이전 버전으로 돌아갑니다. 완료되면 자동으로 다시 열립니다.':'Labels를 종료하고 업데이트를 설치합니다. 완료되면 자동으로 다시 열립니다.';
         }catch(error){
           state.restarting=false;busy=false;controls.forEach(control=>control.disabled=false);
           addLabel.disabled=state.draft.labels.length>=100;state.save.disabled=state.conflict;updateControls();
@@ -328,8 +333,8 @@
         catch(error){message.textContent='공개 최신 버전을 확인하지 못했습니다. 업데이트 확인을 눌러 다시 시도해 주세요. '+(error?.message||String(error));}
         finally{busy=false;updateControls();}
       }
-      const actions=element('div','cdx-update-actions');actions.append(check,download,restart);
-      updates.append(summary,versions,codexNotice,message,restartNotice,editNotice,actions);editor.append(updates);
+      const actions=element('div','cdx-update-actions');actions.append(check,download,restart,rollback);
+      updates.append(summary,versions,codexNotice,message,recoveryNotice,restartNotice,editNotice,actions);editor.append(updates);
       readUpdateStatus();
     }
     const appearanceSpecs=[['fontSizePx','글자 크기 (px)',8,32],['borderRadiusPx','둥근 모서리 (px)',0,30],['horizontalPaddingPx','좌우 여백 (px)',0,30],['verticalPaddingPx','상하 여백 (px)',0,20],['gapPx','제목과의 간격 (px)',0,40]];

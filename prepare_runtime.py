@@ -53,7 +53,7 @@ def digest(data, block=4194304):
             'blocks': [hashlib.sha256(data[i:i+block]).hexdigest() for i in range(0, len(data), block)]}
 
 
-def build_asar(source, target, config_directory, extra=None):
+def build_asar(source, target, config_directory, extra=None, *, refresh=False):
     source, target = Path(source), Path(target)
     if source.resolve() == target.resolve():
         raise ValueError('The source archive must never be the target')
@@ -80,11 +80,18 @@ def build_asar(source, target, config_directory, extra=None):
             if json.loads(read('package.json'))['version'] != SUPPORTED_APP_VERSION:
                 raise RuntimeError('Unsupported app version. Inspect the new version before patching.')
             early, preload = '.vite/build/early-bootstrap.js', '.vite/build/preload.js'
-            if MARKER in read(early) or MARKER in read(preload):
+            early_source, preload_source = read(early), read(preload)
+            prefix = MARKER + b'\nrequire("./codex-labels-main.cjs");\n'
+            if refresh:
+                if not early_source.startswith(prefix) or early_source.count(MARKER) != 1 or preload_source.count(MARKER) != 1:
+                    raise RuntimeError('Unknown existing Labels patch; keep the current runtime.')
+                early_source = early_source[len(prefix):]
+                preload_source = preload_source.split(b'\n' + MARKER + b'\n')[0]
+            elif MARKER in early_source or MARKER in preload_source:
                 raise RuntimeError('The source is already patched; use the unmodified installed app.')
             changed = {
-                early: MARKER + b'\nrequire("./codex-labels-main.cjs");\n' + read(early),
-                preload: read(preload) + b'\n' + MARKER + b'\n' + (ROOT/'extension/preload.js').read_bytes(),
+                early: prefix + early_source,
+                preload: preload_source + b'\n' + MARKER + b'\n' + (ROOT/'extension/preload.js').read_bytes(),
                 '.vite/build/codex-labels-main.cjs': (ROOT/'extension/main.cjs').read_bytes(),
                 '.vite/build/codex-labels-store.cjs': (ROOT/'extension/store.cjs').read_bytes(),
                 '.vite/build/codex-labels-renderer.js': (ROOT/'extension/renderer.js').read_bytes(),
@@ -98,6 +105,16 @@ def build_asar(source, target, config_directory, extra=None):
             if activity_bundle not in original:
                 raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
             activity_source = read(activity_bundle).decode('utf-8')
+            if refresh:
+                old_activity = read('.vite/build/codex-labels/activity-sync.cjs').decode('utf-8') + '\n'
+                if not activity_source.startswith(old_activity):
+                    raise RuntimeError('Unknown activity patch; keep the current runtime.')
+                activity_source = activity_source[len(old_activity):]
+                for variable in ('e', 'r'):
+                    inserted = f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)'
+                    if activity_source.count(inserted) != 1:
+                        raise RuntimeError('Unknown activity hook; keep the current runtime.')
+                    activity_source = activity_source.replace(inserted, '', 1)
             for variable in ('e', 'r'):
                 anchor = f'C_(o,n).observeCatalogThreads({variable})'
                 if activity_source.count(anchor) != 1:
@@ -205,7 +222,7 @@ def file_hash(file):
         return hashlib.file_digest(handle, 'sha256').hexdigest()
 
 
-def prepare_runtime(source, root=ROOT, *, destination=None, progress=None):
+def prepare_runtime(source, root=ROOT, *, destination=None, progress=None, refresh=False):
     source, root = Path(source).resolve(), Path(root).resolve()
     target = Path(destination).resolve() if destination else root/'runtime/app'
     if target.parent != root/'runtime' or target.name in ('', '.', '..'):
@@ -215,6 +232,13 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None):
     # Reject both nested directions to avoid recursive copying or copying the app into itself.
     if source == target or source in target.parents or target in source.parents or root == source or source in root.parents:
         raise ValueError('The source installation must be outside the output runtime directory tree.')
+    previous = None
+    if refresh:
+        if source != root/'runtime/app':
+            raise ValueError('Refresh requires the current installation runtime.')
+        previous = json.loads((source/'codex-labels-build.json').read_text(encoding='utf-8'))
+        if previous.get('version') != 3 or Path(previous.get('configPath', '')).resolve() != root/'labels.json' or previous.get('patchedAsarSha256') != file_hash(source/'resources/app.asar'):
+            raise ValueError('Current runtime verification failed.')
     validate_source(source)
     prepare_config(root)
     source_hash = file_hash(source/'resources/app.asar')
@@ -226,13 +250,15 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None):
         shutil.copytree(source, stage, ignore=lambda directory, names:
                         ['app.asar'] if Path(directory) == source/'resources' and 'app.asar' in names else [])
         if progress: progress('라벨 기능을 설치하고 검증하고 있습니다', 65)
-        files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root)
+        files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root, refresh=refresh)
         if file_hash(source/'resources/app.asar') != source_hash:
             raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
         manifest = {'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
                     'patchedAsarSha256': file_hash(stage/'resources/app.asar'), 'changedArchiveFiles': files,
                     'configPath': str(root/'labels.json'), 'originalInstallModified': False,
                     'liveAppActivated': False, 'launchMode': 'side-by-side', 'nativeNotificationClickVerified': False}
+        if previous:
+            manifest.update(sourcePackage=previous.get('sourcePackage'), sourceAsarSha256=previous.get('sourceAsarSha256'), basePreserved=True)
         # Stage the manifest too; a failure before publication leaves no half-built runtime/app.
         (stage/'codex-labels-build.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
         stage.rename(target)

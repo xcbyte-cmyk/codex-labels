@@ -120,6 +120,18 @@ test('missing helper acknowledgement leaves the app running and retry available'
   await assert.rejects(updater.restart(),/앱을 종료하지/);assert.equal(quits,0);
   await updater.status();
 });
+
+test('rollback uses the same acknowledged restart gate and never stages an update',async t=>{
+  const {root}=fixture(t);let action,quits=0;
+  const updater=createUpdater(root,{ackTimeout:1000,
+    execute(_exe,args,_options,cb){assert.equal(args[0],'update-status');cb(null,'{"rollbackAvailable":true,"pendingRestart":false}');},
+    start(_exe,args){action=args[0];const child=new EventEmitter();child.unref=()=>{};
+      const token=args.at(-1);setTimeout(()=>fs.writeFileSync(path.join(root,'.restarts',token+'.json'),JSON.stringify({ready:true,token,processId:42})),10);return child;},
+    quit(){quits++;}
+  });
+  assert.equal((await updater.rollback()).restarting,true);assert.equal(action,'rollback');assert.equal(quits,0);
+  await new Promise(resolve=>setTimeout(resolve,300));assert.equal(quits,1);
+});
 test('original Codex detection is local, cached once, and cannot download or restart',async()=>{
   const calls=[];
   const updater=createUpdater('fixture',{execute(_exe,args,_options,cb){

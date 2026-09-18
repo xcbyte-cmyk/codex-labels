@@ -203,7 +203,7 @@ class WindowsHelperTests(unittest.TestCase):
 
     def test_failed_update_launches_verified_previous_runtime(self):
         helper.prepare(self.root,self.source);self.mark_old_payload()
-        with patch.object(helper,'find_source',side_effect=RuntimeError('new Store unsupported')), \
+        with patch.object(helper,'prepare',side_effect=RuntimeError('candidate failed')), \
                 patch.object(helper,'profile_path',return_value=self.base/'profile'), \
                 patch.object(helper.subprocess,'Popen',return_value=Mock(pid=123)) as spawn:
             result=helper.launch(self.root)

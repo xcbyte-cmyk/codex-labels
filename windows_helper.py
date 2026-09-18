@@ -12,10 +12,11 @@ import sys
 import time
 import uuid
 import re
+import runtime_recovery as recovery
 
 import prepare_runtime as builder
 
-VERSION = '0.2.3'
+VERSION = '0.2.4'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
@@ -103,7 +104,7 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'launcher_ui.py', ASSETS/'labels.example.json']
+    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'launcher_ui.py', ASSETS/'runtime_recovery.py', ASSETS/'labels.example.json']
     files += sorted((ASSETS/'extension').glob('*.js'))
     files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
     for file in files:
@@ -170,11 +171,13 @@ def recover_runtime(root):
             return
 
 
-def prepare(root, source, progress=None):
-    root, source = Path(root).resolve(), Path(source).resolve()
+def prepare(root, source=None, progress=None, *, verify_runtime=False):
+    root = Path(root).resolve()
+    refresh = source is None
+    source = root/'runtime/app' if refresh else Path(source).resolve()
     builder.validate_source(source)  # Validate before creating or moving anything.
     target = root/'runtime/app'
-    if source == root or source in root.parents or root in source.parents:
+    if source == root or source in root.parents or (root in source.parents and not refresh):
         raise RuntimeError('공식 설치 폴더 밖의 별도 폴더에 압축을 풀어 주세요.')
     if (root/'runtime').resolve() != root/'runtime' or target.resolve() != target:
         raise RuntimeError('runtime 폴더의 바로가기 또는 연결 경로에는 설치할 수 없습니다.')
@@ -182,7 +185,7 @@ def prepare(root, source, progress=None):
         raise RuntimeError('빌드 기록이 없는 runtime/app 폴더가 있습니다. 다른 빈 폴더에서 설치하세요.')
     try:
         require_ready(root)
-        if read_receipt(root).get('sourceAsarSha256') == builder.file_hash(source/'resources/app.asar'):
+        if refresh or read_receipt(root).get('sourceAsarSha256') == builder.file_hash(source/'resources/app.asar'):
             return {'ready': True, 'root': str(root), 'backup': None, 'alreadyPrepared': True}
     except RuntimeError:
         pass
@@ -198,20 +201,26 @@ def prepare(root, source, progress=None):
     # the old app; interruption during the expensive copy cannot remove it.
     incoming = target.with_name('.prepared-' + uuid.uuid4().hex)
     backup = None
+    old_receipt = read_receipt(root)
     try:
-        builder.prepare_runtime(source, root, destination=incoming, progress=progress)
+        builder.prepare_runtime(source, root, destination=incoming, progress=progress, **({'refresh': True} if refresh else {}))
         receipt = json.loads((incoming/'codex-labels-build.json').read_text(encoding='utf-8'))
         receipt.update(helperVersion=VERSION, helperPayloadSha256=payload_fingerprint())
         write_json(incoming/'codex-labels-build.json', receipt)
+        if verify_runtime:
+            if progress: progress('별도 환경에서 새 실행본을 확인하고 있습니다', 72)
+            recovery.smoke(incoming, ASSETS/'labels.example.json')
         if progress: progress('검증된 새 버전으로 교체하고 있습니다', 80)
         if target.exists() and (target/'ChatGPT.exe').resolve() in running_apps():
             raise RuntimeError('설치 중 Labels가 다시 열렸습니다. 현재 실행본을 유지합니다. 앱에서 다시 설치해 주세요.')
         if target.exists():
             previous = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
+            recovery.checkpoint(root, previous, old_receipt, payload_fingerprint())
             target.rename(previous)
             backup = previous
         incoming.rename(target)
         write_json(root/'build-manifest.json', receipt)
+        recovery.prepared(root)
     except Exception:
         if backup is not None:
             # Preserve even an incomplete new runtime for diagnosis before restore.
@@ -299,8 +308,14 @@ public static class LabelsShortcut {
 
 def update_status(root):
     receipt = read_receipt(root)
+    saved = recovery.state(root)
+    blocked = saved.get('blockedPayload') == payload_fingerprint()
+    backup = recovery.backup_path(root, saved)
     return {'currentVersion': receipt.get('helperVersion') if receipt else None,
-            'downloadedVersion': VERSION, 'pendingRestart': not receipt or receipt.get('helperPayloadSha256') != payload_fingerprint()}
+            'downloadedVersion': receipt.get('helperVersion') if blocked and receipt else VERSION,
+            'pendingRestart': not blocked and (not receipt or receipt.get('helperPayloadSha256') != payload_fingerprint()),
+            'rollbackAvailable': bool(backup and (backup/'codex-labels-build.json').is_file()),
+            'recoveryNotice': saved.get('notice'), 'updateBlocked': blocked}
 
 
 def codex_status(root):
@@ -388,7 +403,7 @@ def wait_until_active(root, process, started, timeout=75, allow_forwarded=False)
     raise RuntimeError('앱 화면의 준비 완료를 확인하지 못했습니다. 열린 Labels 창을 확인해 주세요.')
 
 
-def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False):
+def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     progress('설치 상태를 확인하고 있습니다', 5)
@@ -396,19 +411,34 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     root.mkdir(parents=True, exist_ok=True)
     with preparation_lock(root):
         recover_runtime(root)
+        saved = recovery.state(root)
+        pending_restore = saved.get('phase') in ('failed', 'restoring', 'switching') or (saved.get('phase') == 'pending' and saved.get('launchAttempted'))
+        if not skip_update and pending_restore and saved.get('runtimeBackup'):
+            if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
+                raise RuntimeError('Labels를 닫으면 이전 버전으로 복구합니다. 강제로 종료하지 않았습니다.')
+            return recovery.schedule(root, Path(__file__))
         try:
-            exe = require_ready(root)
+            if (skip_update or saved.get('blockedPayload') == payload_fingerprint()) and valid_runtime(root, root/'runtime/app'):
+                exe = root/'runtime/app/ChatGPT.exe'
+                update_error = saved.get('notice')
+            else:
+                exe = require_ready(root)
         except RuntimeError:
             if running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
             try:
-                prepare(root, find_source(source), progress)
+                base = None if source is None and valid_runtime(root, root/'runtime/app') else find_source(source)
+                prepare(root, base, progress, verify_runtime=getattr(sys, 'frozen', False))
                 exe = require_ready(root)
             except Exception as error:
                 exe = root/'runtime/app/ChatGPT.exe'
                 if not valid_runtime(root, exe.parent):
                     raise
                 update_error = str(error)
+                recovery.checkpoint(root, None, read_receipt(root), payload_fingerprint())
+                recovery.failed(root, error, payload_fingerprint())
+                if recovery.state(root).get('tools'):
+                    return recovery.schedule(root, Path(__file__))
     existing = running_apps()
     if any(app != exe.resolve() for app in existing):
         raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')
@@ -427,14 +457,33 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
             del env[name]
     progress('Codex Labels를 열고 있습니다', 90)
     started = time.time()
-    process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
-        env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    if wait_ready and not skip_update:
+        recovery.attempted(root)
+    try:
+        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
+            env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except OSError as error:
+        saved = recovery.state(root)
+        if not skip_update and saved.get('phase') == 'pending' and saved.get('runtimeBackup'):
+            recovery.failed(root, error, payload_fingerprint())
+            return recovery.schedule(root, Path(__file__))
+        raise
     process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
     status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
         'executable': str(exe), 'profile': str(profile), 'originalAppStopped': False}
     write_json(root/'launch-status.json', status)
     if wait_ready:
-        active = wait_until_active(root, process, started, allow_forwarded=bool(existing))
+        try:
+            active = wait_until_active(root, process, started, allow_forwarded=bool(existing))
+        except RuntimeError as error:
+            saved = recovery.state(root)
+            if not skip_update and saved.get('phase') == 'pending' and saved.get('runtimeBackup'):
+                recovery.failed(root, error, payload_fingerprint())
+                if process.poll() is not None:
+                    return recovery.schedule(root, Path(__file__))
+                raise RuntimeError('새 버전의 준비를 확인하지 못했습니다. Labels를 닫고 다시 실행하면 이전 버전으로 복구합니다.') from error
+            raise
+        recovery.complete(root)
         status.update(status='active', processId=active['processId'], updateError=update_error)
         write_json(root/'launch-status.json', status)
         progress('Codex Labels가 열렸습니다', 100)
@@ -445,12 +494,13 @@ def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status'], nargs='?', default='launch')
+    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
     parser.add_argument('--root', type=Path, default=default_root())
     parser.add_argument('--source', type=Path)
     parser.add_argument('--shortcut', action='store_true')
     parser.add_argument('--wait-pid', type=int)
     parser.add_argument('--restart-token')
+    parser.add_argument('--recovery-parent', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--no-ui', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--version', action='version', version=VERSION)
     args = parser.parse_args()
@@ -476,10 +526,18 @@ def main():
                     # Read installed metadata without forcing the OLD helper's
                     # compatibility gate. A newer package may support a newer
                     # Store app; its own builder still validates before patching.
-                    sources = [args.source.resolve()] if args.source else installed_sources()
+                    try:
+                        sources = [args.source.resolve()] if args.source else installed_sources()
+                    except (OSError, RuntimeError, subprocess.SubprocessError):
+                        sources = []
                     if not sources and builder.SOURCE.is_dir():
                         sources = [builder.SOURCE]
-                    versions = {builder.source_version(source) for source in sources}
+                    versions = set()
+                    for source in sources:
+                        try: versions.add(builder.source_version(source))
+                        except (OSError, ValueError, KeyError): pass
+                    if valid_runtime(root, root/'runtime/app'):
+                        versions.add(builder.source_version(root/'runtime/app'))
                     if not versions:
                         raise RuntimeError('이 PC의 공식 Codex 설치본을 찾지 못했습니다.')
                     result = updater.stage(root, VERSION, versions)
@@ -502,6 +560,11 @@ def main():
             parent_exited = False
             def operation(progress):
                 nonlocal parent_exited
+                if args.action == 'rollback-apply':
+                    recovery.wait_for_helper(args.recovery_parent)
+                    with preparation_lock(root):
+                        recovery.restore(root, valid_runtime, running_apps)
+                    return launch(root, progress=progress, wait_ready=not args.no_ui, skip_update=True)
                 if args.wait_pid and not parent_exited:
                     if not wait_for_parent(args.wait_pid, root, args.restart_token, progress):
                         return {'cancelled': True}
@@ -513,6 +576,8 @@ def main():
                             raise RuntimeError('Labels의 종료가 아직 끝나지 않았습니다. 잠시 후 다시 시도해 주세요.')
                         time.sleep(0.5)
                 try:
+                    if args.action == 'rollback':
+                        return recovery.schedule(root, Path(__file__))
                     return launch(root, progress=progress, wait_ready=not args.no_ui,
                                   source=args.source, shortcut=args.shortcut)
                 except Exception as error:

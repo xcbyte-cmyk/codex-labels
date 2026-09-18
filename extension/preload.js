@@ -17,6 +17,7 @@
     checkUpdate: () => ipcRenderer.invoke('codex-labels:update-check'),
     stageUpdate: () => ipcRenderer.invoke('codex-labels:update-stage'),
     restartUpdate: () => ipcRenderer.invoke('codex-labels:restart-update'),
+    rollbackUpdate: () => ipcRenderer.invoke('codex-labels:rollback-update'),
     notifyThread: value => ipcRenderer.invoke('codex-labels:notify-thread', value),
     notificationStatus: () => ipcRenderer.invoke('codex-labels:notification-status'),
     activationReady: () => ipcRenderer.invoke('codex-labels:activation-ready'),

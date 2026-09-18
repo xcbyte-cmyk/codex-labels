@@ -55,7 +55,7 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
   let runningVersion = null;
   try { runningVersion = JSON.parse(fs.readFileSync(path.join(root, 'runtime/app/codex-labels-build.json'), 'utf8')).helperVersion || null; } catch {}
   const decorate = value => ({...value, currentVersion: runningVersion ?? value.currentVersion ?? null,
-    pendingRestart: !!value.pendingRestart || !!(runningVersion && value.downloadedVersion && value.downloadedVersion !== runningVersion)});
+    pendingRestart: !value.updateBlocked && (!!value.pendingRestart || !!(runningVersion && value.downloadedVersion && value.downloadedVersion !== runningVersion))});
   function environment() {
     const env = {...process.env, PYINSTALLER_RESET_ENVIRONMENT: '1'};
     for (const name of Object.keys(env)) if (name.startsWith('_PYI_')) delete env[name];
@@ -98,16 +98,16 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
     }).finally(() => { active = null; });
     return active;
   }
-  async function restart() {
+  async function restart(rollback = false) {
     const state = await run('update-status');
-    if (!state.pendingRestart) throw Error('설치할 업데이트가 없습니다.');
+    if (rollback ? !state.rollbackAvailable : !state.pendingRestart) throw Error(rollback ? '복구할 이전 버전이 없습니다.' : '설치할 업데이트가 없습니다.');
     active = new Promise((resolve, reject) => {
       const token = crypto.randomBytes(16).toString('hex');
       const directory = path.join(root, '.restarts');
       if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) return reject(Error('Invalid restart directory'));
       fs.mkdirSync(directory, {recursive:true});
       const acknowledgement = path.join(directory, token + '.json');
-      const child = start(path.join(root, 'CodexLabelsHelper.exe'), ['launch', '--root', root, '--wait-pid', String(process.pid), '--restart-token', token],
+      const child = start(path.join(root, 'CodexLabelsHelper.exe'), [rollback ? 'rollback' : 'launch', '--root', root, '--wait-pid', String(process.pid), '--restart-token', token],
         {detached:true, stdio:'ignore', windowsHide:true, env:environment()});
       child.unref();
       const deadline = Date.now() + ackTimeout;
@@ -139,6 +139,6 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
     }).finally(() => { active = null; });
     return active;
   }
-  return {check: () => withOriginal('update-check'), stage: () => withOriginal('update-stage'), status: () => withOriginal('update-status'), prime, restart};
+  return {check: () => withOriginal('update-check'), stage: () => withOriginal('update-stage'), status: () => withOriginal('update-status'), prime, restart, rollback: () => restart(true)};
 }
 module.exports = {createUpdater, installStaged};
