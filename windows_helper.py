@@ -172,6 +172,19 @@ def recover_runtime(root):
             return
 
 
+def move_runtime(source, target):
+    """Windows can briefly retain directory handles after a child exits."""
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            source.rename(target)
+            return
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (5, 32) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+
+
 def prepare(root, source=None, progress=None, *, verify_runtime=False):
     root = Path(root).resolve()
     refresh = source is None
@@ -217,9 +230,9 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
         if target.exists():
             previous = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
             recovery.checkpoint(root, previous, old_receipt, payload_fingerprint())
-            target.rename(previous)
+            move_runtime(target, previous)
             backup = previous
-        incoming.rename(target)
+        move_runtime(incoming, target)
         write_json(root/'build-manifest.json', receipt)
         recovery.prepared(root)
     except Exception:
@@ -227,14 +240,17 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
             # Preserve even an incomplete new runtime for diagnosis before restore.
             if target.exists():
                 target.rename(target.with_name('app.failed-' + uuid.uuid4().hex[:8]))
-            backup.rename(target)
+            move_runtime(backup, target)
             write_json(root/'build-manifest.json', read_receipt(root))
         raise
     finally:
         # Preserve an interrupted/failed candidate for diagnosis, never delete
         # user data or the previous runtime in this recovery path.
         if incoming.exists():
-            incoming.rename(incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
+            try:
+                move_runtime(incoming, incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
+            except OSError:
+                pass  # Keep the candidate in place and retain the original failure.
     return {'ready': True, 'root': str(root), 'backup': str(backup) if backup else None}
 
 
