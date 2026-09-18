@@ -47,7 +47,7 @@ test('helper bridge is single flight, fixed command, no shell, and clears inheri
   let callback, args, options;
   const old=process.env._PYI_APPLICATION_HOME_DIR;process.env._PYI_APPLICATION_HOME_DIR='stale';
   try{
-    const updater=createUpdater('fixture',{execute(_exe,a,o,cb){args=a;options=o;callback=cb;}});
+    const updater=createUpdater('fixture',{execute(_exe,a,o,cb){if(a[0]==='codex-status'){cb(null,'{"state":"same"}');return;}args=a;options=o;callback=cb;}});
     const pending=updater.check();
     assert.equal(args[0],'update-check');assert.equal(options.windowsHide,true);assert.equal(options.shell,undefined);
     assert.equal(options.env._PYI_APPLICATION_HOME_DIR,undefined);assert.equal(options.env.PYINSTALLER_RESET_ENVIRONMENT,'1');
@@ -64,7 +64,7 @@ test('local status reports running version separately and restart quits only aft
   fs.writeFileSync(path.join(runtime,'codex-labels-build.json'),JSON.stringify({helperVersion:'0.1.0'}));
   let quits=0,requested;
   const updater=createUpdater(root,{
-    execute(_exe,args,_options,cb){assert.equal(args[0],'update-status');cb(null,JSON.stringify({currentVersion:'0.2.1',downloadedVersion:'0.2.1',pendingRestart:true}));},
+    execute(_exe,args,_options,cb){if(args[0]==='codex-status'){cb(null,'{"state":"same"}');return;}assert.equal(args[0],'update-status');cb(null,JSON.stringify({currentVersion:'0.2.1',downloadedVersion:'0.2.1',pendingRestart:true}));},
     start(_exe,args,options){
       requested=args;assert.equal(options.detached,true);assert.equal(options.windowsHide,true);
       const child=new EventEmitter();child.unref=()=>{};
@@ -85,4 +85,22 @@ test('missing helper acknowledgement leaves the app running and retry available'
     start(){const child=new EventEmitter();child.unref=()=>{};return child;}});
   await assert.rejects(updater.restart(),/앱을 종료하지/);assert.equal(quits,0);
   await updater.status();
+});
+test('original Codex detection is local, cached once, and cannot download or restart',async()=>{
+  const calls=[];
+  const updater=createUpdater('fixture',{execute(_exe,args,_options,cb){
+    calls.push(args[0]);
+    cb(null,JSON.stringify(args[0]==='codex-status'?{state:'changed',baseVersion:'26.1.0',installedVersion:'27.1.0',newer:true}:{pendingRestart:false}));
+  },start(){assert.fail('must not restart');},install(){assert.fail('must not install');}});
+  await updater.prime();
+  assert.deepEqual(calls,['codex-status']);
+  assert.equal((await updater.status()).codex.state,'changed');
+  await updater.status();
+  assert.deepEqual(calls,['codex-status','update-status','update-status']);
+});
+test('original detection failure does not break ordinary Labels status',async()=>{
+  const updater=createUpdater('fixture',{execute(_exe,args,_options,cb){
+    if(args[0]==='codex-status')cb(Error('no installation'), '');else cb(null,'{"pendingRestart":false}');
+  }});
+  assert.equal((await updater.status()).codex.state,'unavailable');
 });

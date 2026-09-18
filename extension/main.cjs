@@ -10,6 +10,7 @@ const {createNotifications} = require('./codex-labels/notifications.cjs');
 const {configDirectory} = require('./codex-labels-location.json');
 const {createUpdater} = require('./codex-labels/updates.cjs');
 const updater = createUpdater(configDirectory, {quit: () => app.quit()});
+app.once('ready', () => { updater.prime().catch(() => {}); });
 // Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
 // on the SAME Labels profile, without modifying CODEX_HOME or the original app.
 const defaultProfile = process.platform === 'win32' && process.env.LOCALAPPDATA

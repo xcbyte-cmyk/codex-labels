@@ -355,6 +355,38 @@ class LabelRendererTests(unittest.TestCase):
         self.assertIn('설치할 새 정식 버전이 없습니다',self.page.get_by_role('status').inner_text())
         self.assertFalse(self.page.get_by_role('button',name='다운로드 및 다음 실행에 적용').is_visible())
 
+    def test_original_codex_change_shows_notice_only_and_check_is_explicit(self):
+        self.start()
+        self.page.evaluate('''()=>{
+            fixture.updateCalls=[];
+            const status={currentVersion:'0.2.2',downloadedVersion:'0.2.2',pendingRestart:false,codex:{state:'changed',baseVersion:'26.911.61220',installedVersion:'27.100.1',newer:true}};
+            codexLabels.updateStatus=async()=>{fixture.updateCalls.push('local');return status;};
+            codexLabels.checkUpdate=async()=>{fixture.updateCalls.push('check');return {...status,available:false,latestVersion:'0.2.2'};};
+            codexLabels.stageUpdate=async()=>{throw Error('must not download');};
+            codexLabels.restartUpdate=async()=>{throw Error('must not restart');};
+        }''')
+        self.choose('라벨 설정…')
+        notice=self.page.locator('#cdx-codex-notice')
+        self.assertTrue(notice.is_visible())
+        self.assertIn('새 Codex 버전 감지됨',notice.inner_text())
+        self.assertIn('호환성은 아직 확인되지 않았습니다',notice.inner_text())
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['local'])
+        self.assertFalse(self.page.get_by_role('button',name='설치하고 다시 실행',exact=True).is_visible())
+        self.page.get_by_role('button',name='Labels 업데이트 확인',exact=True).click()
+        self.assertEqual(self.page.evaluate('fixture.updateCalls'),['local','check'])
+        self.assertEqual(self.page.evaluate('fixture.saves.length'),0)
+
+    def test_same_or_unknown_original_codex_version_has_no_update_notice(self):
+        self.start()
+        for state in ['same','unavailable']:
+            self.page.evaluate('''state=>{
+                codexLabels.updateStatus=async()=>({currentVersion:'0.2.2',pendingRestart:false,codex:{state}});
+                codexLabels.checkUpdate=async()=>({available:false});codexLabels.stageUpdate=async()=>({});
+            }''',state)
+            self.choose('라벨 설정…')
+            self.assertFalse(self.page.locator('#cdx-codex-notice').is_visible())
+            self.page.get_by_role('button',name='취소',exact=True).click()
+
     def test_local_update_status_shows_pending_versions_without_network_and_restarts(self):
         self.start()
         self.page.evaluate('''()=>{

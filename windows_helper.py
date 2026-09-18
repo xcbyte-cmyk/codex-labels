@@ -15,7 +15,7 @@ import re
 
 import prepare_runtime as builder
 
-VERSION = '0.2.1'
+VERSION = '0.2.2'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
@@ -303,6 +303,30 @@ def update_status(root):
             'downloadedVersion': VERSION, 'pendingRestart': not receipt or receipt.get('helperPayloadSha256') != payload_fingerprint()}
 
 
+def codex_status(root):
+    """Read-only comparison, including newer unsupported official installs."""
+    base = None
+    try:
+        root = Path(root).resolve()
+        receipt = read_receipt(root) or {}
+        base = receipt.get('sourceAppVersion') or builder.source_version(root/'runtime/app')
+        sources = installed_sources()
+        if not sources and builder.SOURCE.is_dir():
+            sources = [builder.SOURCE]
+        installed = {builder.source_version(source) for source in sources}
+        def parts(value):
+            if not isinstance(value, str) or len(value) > 64 or not re.fullmatch(r'\d+(?:\.\d+)+', value):
+                raise ValueError('Invalid installed version')
+            return tuple(map(int, value.split('.')))
+        original = max(installed, key=parts)
+        base_parts, original_parts = parts(base), parts(original)
+        return {'state': 'changed' if base_parts != original_parts else 'same',
+                'baseVersion': base, 'installedVersion': original,
+                'newer': original_parts > base_parts}
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError):
+        return {'state': 'unavailable', 'baseVersion': base, 'installedVersion': None, 'newer': False}
+
+
 def wait_for_parent(pid, root, token, progress, timeout=120):
     """Only observe the specified Labels process; never terminate any app."""
     import ctypes
@@ -421,7 +445,7 @@ def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status'], nargs='?', default='launch')
+    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status'], nargs='?', default='launch')
     parser.add_argument('--root', type=Path, default=default_root())
     parser.add_argument('--source', type=Path)
     parser.add_argument('--shortcut', action='store_true')
@@ -438,7 +462,9 @@ def main():
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
-        if args.action == 'update-status':
+        if args.action == 'codex-status':
+            result = codex_status(root)
+        elif args.action == 'update-status':
             result = update_status(root)
         elif args.action in ('update-check', 'update-stage'):
             import updater

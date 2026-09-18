@@ -239,6 +239,29 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(state['downloadedVersion'],helper.VERSION)
         self.assertTrue(state['pendingRestart'])
 
+    def test_original_codex_version_notice_reads_newer_unsupported_install_without_patching(self):
+        helper.prepare(self.root,self.source)
+        original=(self.root/'runtime/app/resources/app.asar').read_bytes()
+        config=(self.root/'labels.json').read_bytes()
+        assignments=(self.root/'assignments.json').read_bytes()
+        with patch.object(helper,'installed_sources',return_value=[self.source]):
+            self.assertEqual(helper.codex_status(self.root)['state'],'same')
+            write_archive(self.source/'resources/app.asar',{'package.json':b'{"version":"27.100.1"}'})
+            state=helper.codex_status(self.root)
+        self.assertEqual(state,{'state':'changed','baseVersion':builder.SUPPORTED_APP_VERSION,'installedVersion':'27.100.1','newer':True})
+        self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),original)
+        self.assertEqual((self.root/'labels.json').read_bytes(),config)
+        self.assertEqual((self.root/'assignments.json').read_bytes(),assignments)
+
+    def test_original_codex_notice_supports_old_receipts_and_graceful_read_failure(self):
+        helper.prepare(self.root,self.source)
+        receipt=helper.read_receipt(self.root);receipt.pop('sourceAppVersion',None)
+        helper.write_json(self.root/'runtime/app/codex-labels-build.json',receipt)
+        with patch.object(helper,'installed_sources',return_value=[self.source]):
+            self.assertEqual(helper.codex_status(self.root)['baseVersion'],builder.SUPPORTED_APP_VERSION)
+        with patch.object(helper,'installed_sources',side_effect=RuntimeError('unavailable')):
+            self.assertEqual(helper.codex_status(self.root)['state'],'unavailable')
+
     @unittest.skipUnless(helper.sys.platform == 'win32', 'Windows mutex')
     def test_preparation_mutex_rejects_concurrent_build_and_releases(self):
         with helper.preparation_lock(self.root):

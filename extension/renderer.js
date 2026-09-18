@@ -255,6 +255,8 @@
     if(typeof api.checkUpdate==='function'&&typeof api.stageUpdate==='function'){
       const updates=element('details'),summary=element('summary',null,'Codex Labels 업데이트');
       const versions=element('p','cdx-settings-help');versions.hidden=true;
+      const codexNotice=element('div','cdx-settings-preview');codexNotice.id='cdx-codex-notice';codexNotice.hidden=true;
+      const codexTitle=element('strong'),codexDetail=element('p','cdx-settings-help');codexNotice.append(codexTitle,codexDetail);
       const message=element('p','cdx-settings-help','새 버전을 직접 확인합니다. 다운로드 후 설치 시점을 선택할 수 있습니다.');message.setAttribute('role','status');
       const restartNotice=element('p','cdx-settings-help','열린 작업이 중단될 수 있습니다. 저장하지 않은 라벨 편집 내용은 사라집니다.');restartNotice.hidden=true;
       const editNotice=element('p','cdx-settings-help');editNotice.hidden=true;
@@ -274,6 +276,13 @@
       };
       state.updateControls=updateControls;
       function showUpdateStatus(){
+        const changed=result.codex?.state==='changed';
+        codexNotice.hidden=!changed;check.textContent=changed?'Labels 업데이트 확인':'업데이트 확인';
+        if(changed){
+          codexTitle.textContent=result.codex.newer?'새 Codex 버전 감지됨':'원본 Codex 버전 변경 감지됨';
+          codexDetail.textContent=`Labels 기반: ${result.codex.baseVersion} · 설치된 원본: ${result.codex.installedVersion}. 호환성은 아직 확인되지 않았습니다. 원본 업데이트를 자동으로 적용하지 않습니다.`;
+          updates.open=true;
+        }
         versions.hidden=false;
         versions.textContent=`실행 중: ${result.currentVersion?'v'+result.currentVersion:'버전 확인 불가'}`;
         if(result.downloadedVersion)versions.textContent+=` · 다운로드된 버전: v${result.downloadedVersion}`;
@@ -313,7 +322,7 @@
         finally{busy=false;updateControls();}
       }
       const actions=element('div','cdx-update-actions');actions.append(check,download,restart);
-      updates.append(summary,versions,message,restartNotice,editNotice,actions);editor.append(updates);
+      updates.append(summary,versions,codexNotice,message,restartNotice,editNotice,actions);editor.append(updates);
       if(typeof api.updateStatus==='function')readUpdateStatus();
     }
     const appearanceSpecs=[['fontSizePx','글자 크기 (px)',8,32],['borderRadiusPx','둥근 모서리 (px)',0,30],['horizontalPaddingPx','좌우 여백 (px)',0,30],['verticalPaddingPx','상하 여백 (px)',0,20],['gapPx','제목과의 간격 (px)',0,40]];

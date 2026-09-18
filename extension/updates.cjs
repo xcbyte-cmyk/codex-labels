@@ -50,6 +50,7 @@ function installStaged(root, result, io = fs) {
 function createUpdater(root, {execute = execFile, install = installStaged, start = spawn, quit = () => {}, ackTimeout = 15000} = {}) {
   root = path.resolve(root);
   let active = null;
+  let originalStatus;
   let runningVersion = null;
   try { runningVersion = JSON.parse(fs.readFileSync(path.join(root, 'runtime/app/codex-labels-build.json'), 'utf8')).helperVersion || null; } catch {}
   const decorate = value => ({...value, currentVersion: runningVersion ?? value.currentVersion ?? null,
@@ -58,6 +59,20 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
     const env = {...process.env, PYINSTALLER_RESET_ENVIRONMENT: '1'};
     for (const name of Object.keys(env)) if (name.startsWith('_PYI_')) delete env[name];
     return env;
+  }
+  function prime() {
+    if (!originalStatus) originalStatus = new Promise(resolve => {
+      execute(path.join(root, 'CodexLabelsHelper.exe'), ['codex-status', '--root', root],
+        {windowsHide:true, timeout:15000, maxBuffer:16384, encoding:'utf8', env:environment()}, (error, stdout) => {
+          try { if (error) throw error; resolve(JSON.parse(stdout.trim().split(/\r?\n/).at(-1))); }
+          catch { resolve({state:'unavailable'}); }
+        });
+    });
+    return originalStatus;
+  }
+  async function withOriginal(action) {
+    const [value, codex] = await Promise.all([run(action), prime()]);
+    return {...value, codex};
   }
   function run(action) {
     if (active) return Promise.reject(Error('업데이트 확인 또는 다운로드가 진행 중입니다.'));
@@ -115,6 +130,6 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
     }).finally(() => { active = null; });
     return active;
   }
-  return {check: () => run('update-check'), stage: () => run('update-stage'), status: () => run('update-status'), restart};
+  return {check: () => withOriginal('update-check'), stage: () => withOriginal('update-stage'), status: () => withOriginal('update-status'), prime, restart};
 }
 module.exports = {createUpdater, installStaged};
