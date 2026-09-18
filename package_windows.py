@@ -51,7 +51,10 @@ def main():
             '--specpath', str(work), '--add-data', str(assets) + ':.', str(ROOT/'windows_helper.py')]
         subprocess.run(command, cwd=ROOT, check=True)
         from importlib.metadata import distribution
-        python_license = Path(sys.base_prefix)/'LICENSE.txt'
+        python_license = next((Path(sys.base_prefix)/name for name in ('LICENSE.txt', 'LICENSE_PYTHON.txt')
+                               if (Path(sys.base_prefix)/name).is_file()), None)
+        if python_license is None:
+            raise RuntimeError('Python runtime license file was not found.')
         distribution_info = distribution('pyinstaller')
         license_entry = next(file for file in distribution_info.files if str(file).endswith('COPYING.txt'))
         pyinstaller_license = distribution_info.locate_file(license_entry)
