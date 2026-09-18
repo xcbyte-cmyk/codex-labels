@@ -34,7 +34,12 @@
     if(!target||parent.closest('input,textarea,[contenteditable="true"],#cdx-vocabulary'))return null;
     const term=s.toString().trim();if(!term||term.length>160)return null;
     const block=parent.closest('p,li,pre,td,blockquote')||parent;
-    const content=block.textContent||'', offset=content.indexOf(term);
+    // Use the selected DOM position, not the first matching phrase in the block.
+    // Include trimmed leading whitespace so the retained term stays in context.
+    const before=range.cloneRange();before.selectNodeContents(block);
+    before.setEnd(range.startContainer,range.startOffset);
+    const selectedText=range.toString();
+    const content=block.textContent||'', offset=before.toString().length+selectedText.length-selectedText.trimStart().length;
     const start=Math.max(0,offset-450);
     return {term,context:content.slice(start,start+1600).trim()};
   }
