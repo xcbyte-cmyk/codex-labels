@@ -3,8 +3,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 function resolveAccount(root, argv = process.argv, env = process.env) {
+  const protocols = argv.filter(arg => arg.startsWith('--codex-labels-account-protocol'));
+  if (protocols.length && (protocols.length !== 1 || protocols[0] !== '--codex-labels-account-protocol=1')) throw Error('지원하지 않는 계정 연결 규칙입니다.');
+  if (protocols.length) {
+    if (!env.LOCALAPPDATA || !path.isAbsolute(env.LOCALAPPDATA)) throw Error('계정 저장소 경로가 없습니다.');
+    root = path.join(fs.realpathSync(env.LOCALAPPDATA), 'CodexLabels', 'AccountWindows');
+  }
+  if (argv.some(arg => arg.startsWith('--codex-labels-account') && !arg.startsWith('--codex-labels-account=') && arg !== '--codex-labels-account-protocol=1')) throw Error('계정 실행 인자를 확인하세요.');
   const args = (argv || []).filter(arg => arg.startsWith('--codex-labels-account='));
-  if (!args.length && !env.CODEX_LABELS_ACCOUNT_ID) return null;
+  if (!args.length && !env.CODEX_LABELS_ACCOUNT_ID && !protocols.length) return null;
   if (args.length !== 1) throw Error('계정 창은 계정별 실행 도구로 열어 주세요.');
   const id = args[0].split('=')[1];
   if (!/^[0-9a-f]{32}$/.test(id) || env.CODEX_LABELS_ACCOUNT_ID && env.CODEX_LABELS_ACCOUNT_ID !== id) {
@@ -14,6 +21,7 @@ function resolveAccount(root, argv = process.argv, env = process.env) {
   for (const target of [root, path.join(root, 'accounts'), directory]) {
     if (fs.lstatSync(target).isSymbolicLink()) throw Error('계정 폴더 연결은 지원하지 않습니다.');
   }
+  if (fs.existsSync(path.join(root, 'accounts', '.delete-' + id + '.json'))) throw Error('삭제 중인 계정입니다.');
   const data = JSON.parse(fs.readFileSync(path.join(directory, 'account.json'), 'utf8'));
   if (data.version !== 1 || data.id !== id || typeof data.name !== 'string' || !data.name.trim() || data.name.length > 40 || /[\x00-\x1f]/.test(data.name)) {
     throw Error('계정 창 설정이 손상되었습니다.');
@@ -31,7 +39,8 @@ function resolveAccount(root, argv = process.argv, env = process.env) {
     throw Error('계정별 실행 도구에서 로그인 저장소 설정을 확인하세요.');
   }
   for (const key of Object.keys(env)) {
-    if (/^(CODEX_|OPENAI_|AZURE_OPENAI_)/i.test(key) && !['CODEX_LABELS_LAUNCH_TOKEN'].includes(key)) delete env[key];
+    if (['NODE_OPTIONS', 'NODE_PATH'].includes(key.toUpperCase())) delete env[key];
+    if (/^(CODEX_|OPENAI_|AZURE_OPENAI_|CHATGPT_|ELECTRON_)/i.test(key) && !['CODEX_LABELS_LAUNCH_TOKEN'].includes(key)) delete env[key];
   }
   Object.assign(env, {CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_ELECTRON_USER_DATA_PATH: profile,
     CODEX_APP_SERVER_FORCE_CLI: '1', CODEX_LABELS_ACCOUNT_ID: id});

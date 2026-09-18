@@ -27,12 +27,13 @@ def _owns_process(process, root, account_id, directory):
         return False
 
 
-def account_processes(root, account_id):
+def account_processes(root, account_id, *, runtime_root=None):
     root = Path(root).resolve(); directory = profiles.account_path(root, account_id)
     candidates = {}
     # Scan the shared runtime first. Unrelated applications' environments are
     # never inspected. Include its descendants to find tools outside runtime/.
-    runtime = root/'runtime/app'
+    runtime_root = Path(runtime_root or root).resolve()
+    runtime = runtime_root/'runtime/app'
     for process in psutil.process_iter(['exe']):
         try:
             if process.info['exe'] and Path(process.info['exe']).resolve().is_relative_to(runtime):
@@ -43,17 +44,17 @@ def account_processes(root, account_id):
     result = []
     for process in candidates.values():
         try:
-            if _owns_process(process, root, account_id, directory): result.append(process)
+            if _owns_process(process, runtime_root, account_id, directory): result.append(process)
         except psutil.AccessDenied as error:
             raise RuntimeError('계정 창의 실행 상태를 확인할 수 없어 삭제를 중단했습니다.') from error
     return result
 
 
-def stop_account(root, account_id):
+def stop_account(root, account_id, *, runtime_root=None):
     stopped = set()
     deadline = time.monotonic() + 15
     while True:
-        processes = account_processes(root, account_id)
+        processes = account_processes(root, account_id, runtime_root=runtime_root)
         if not processes: return len(stopped)
         if time.monotonic() >= deadline:
             raise RuntimeError('계정 창의 프로세스가 종료되지 않았습니다. 창을 종료한 뒤 삭제를 다시 시도하세요.')
@@ -67,7 +68,7 @@ def stop_account(root, account_id):
             for process in processes:
                 try:
                     for child in process.children(recursive=True):
-                        if _owns_process(child, root, account_id, profiles.account_path(root, account_id)):
+                        if _owns_process(child, runtime_root or root, account_id, profiles.account_path(root, account_id)):
                             owned[child.pid] = child
                 except psutil.NoSuchProcess: pass
             for process in reversed(list(owned.values())):

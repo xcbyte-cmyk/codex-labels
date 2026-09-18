@@ -253,7 +253,7 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None, refre
         files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root, refresh=refresh)
         if file_hash(source/'resources/app.asar') != source_hash:
             raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
-        manifest = {'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
+        manifest = {'accountHostProtocol': 1, 'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
                     'patchedAsarSha256': file_hash(stage/'resources/app.asar'), 'changedArchiveFiles': files,
                     'configPath': str(root/'labels.json'), 'originalInstallModified': False,
                     'liveAppActivated': False, 'launchMode': 'side-by-side', 'nativeNotificationClickVerified': False}

@@ -16,7 +16,7 @@ const smokeDirectory = process.env.CODEX_LABELS_SMOKE_DIRECTORY;
 const configDirectory = smokeDirectory || accountProfile?.directory || installedConfigDirectory;
 const {createUpdater} = require('./codex-labels/updates.cjs');
 const updater = createUpdater(installedConfigDirectory, {quit: () => app.quit()});
-app.once('ready', () => { if (!smokeDirectory) updater.prime().catch(() => {}); });
+app.once('ready', () => { if (!smokeDirectory && !accountProfile) updater.prime().catch(() => {}); });
 // Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
 // on the SAME Labels profile, without modifying CODEX_HOME or the original app.
 const defaultProfile = process.platform === 'win32' && process.env.LOCALAPPDATA

@@ -7,6 +7,18 @@ import uuid
 import tomllib
 
 
+def shared_root():
+    """Stable data root independent of the executable installation."""
+    local = os.environ.get('LOCALAPPDATA')
+    if not local or not Path(local).is_absolute():
+        raise ValueError('LOCALAPPDATA 경로를 확인하세요.')
+    candidate = Path(local)
+    for item in (candidate, *candidate.parents):
+        if item.is_symlink() or getattr(item, 'is_junction', lambda: False)():
+            raise ValueError('계정 저장소 연결은 지원하지 않습니다.')
+    return candidate.resolve()/'CodexLabels'/'AccountWindows'
+
+
 def account_path(root, account_id):
     if not isinstance(account_id, str) or not re.fullmatch(r'[0-9a-f]{32}', account_id):
         raise ValueError('올바르지 않은 계정 창 ID입니다.')
@@ -92,7 +104,7 @@ def launch_context(root, account_id, inherited=None):
     # identity must not redirect this account window to the parent's account.
     for key in list(env):
         upper = key.upper()
-        if upper.startswith(('CODEX_', 'OPENAI_', 'AZURE_OPENAI_', '_PYI_', 'ELECTRON_')):
+        if upper.startswith(('CODEX_', 'OPENAI_', 'AZURE_OPENAI_', '_PYI_', 'ELECTRON_', 'CHATGPT_')) or upper in ('NODE_OPTIONS', 'NODE_PATH'):
             del env[key]
     env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
                CODEX_ELECTRON_USER_DATA_PATH=str(profile), CODEX_APP_SERVER_FORCE_CLI='1',

@@ -405,21 +405,26 @@ def wait_until_active(root, process, started, timeout=75, allow_forwarded=False,
     raise RuntimeError('앱 화면의 준비 완료를 확인하지 못했습니다. 열린 Labels 창을 확인해 주세요.')
 
 
-def delete_account(root, account_id, *, progress=None):
+def delete_account(root, account_id, *, progress=None, shared=False):
     import account_cleanup
     root = Path(root).resolve()
     with preparation_lock(root):
-        return account_cleanup.delete_account(root, account_id, progress=progress)
+        data_root = account_profiles.shared_root() if shared else root
+        return account_cleanup.delete_account(data_root, account_id, progress=progress,
+            stop=lambda data, key: account_cleanup.stop_account(data, key, runtime_root=root))
 
 
-def launch_account(root, account_id, *, progress=None, wait_ready=True):
+def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     # Account windows never silently fall back to the default launcher or an
     # older runtime without account isolation support.
     with preparation_lock(root):
         exe = require_ready(root)
-        account, directory, profile, env = account_profiles.launch_context(root, account_id)
+        if shared and (read_receipt(root).get('accountHostProtocol') != 1 or not valid_runtime(root, root/'runtime/app')):
+            raise RuntimeError('이 실행본은 공통 계정 연결 규칙을 지원하지 않습니다.')
+        data_root = account_profiles.shared_root() if shared else root
+        account, directory, profile, env = account_profiles.launch_context(data_root, account_id)
         for name, initial in [('labels.json', (ASSETS/'labels.example.json').read_bytes()),
                               ('assignments.json', b'{"schemaVersion":1,"assignments":{}}\n')]:
             try:
@@ -429,18 +434,19 @@ def launch_account(root, account_id, *, progress=None, wait_ready=True):
         started = time.time()
         process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile),
             '--codex-labels-account=' + account_id,
+            *(['--codex-labels-account-protocol=1'] if shared else []),
             '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
             env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
-    status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
-              'accountProfileId': account_id, 'profile': str(profile), 'executable': str(exe)}
-    write_json(directory/'launch-status.json', status)
-    if wait_ready:
-        active = wait_until_active(root, process, started, allow_forwarded=True,
-                                   status_directory=directory, account_id=account_id)
-        status.update(status='active', processId=active['processId'])
+        process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
+        status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
+                  'accountProfileId': account_id, 'profile': str(profile), 'executable': str(exe)}
         write_json(directory/'launch-status.json', status)
-    return status
+        if wait_ready:
+            active = wait_until_active(root, process, started, allow_forwarded=True,
+                                       status_directory=directory, account_id=account_id)
+            status.update(status='active', processId=active['processId'])
+            write_json(directory/'launch-status.json', status)
+        return status
 
 
 def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False):
