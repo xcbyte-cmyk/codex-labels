@@ -120,6 +120,73 @@ class VocabularyRendererTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#cdx-vocabulary img').count(),0)
         self.assertLessEqual(self.page.locator('#cdx-vocabulary').bounding_box()['width'],390)
 
+    def test_context_uses_selected_occurrence_not_first_text_match(self):
+        self.page.evaluate("""() => {
+          const node=document.querySelector('#answer').firstChild;
+          node.textContent='FIRST_MEANING bank. '+'earlier text '.repeat(180)+'SECOND_MEANING bank by the river.';
+          const offset=node.textContent.lastIndexOf('bank'),range=document.createRange();
+          range.setStart(node,offset);range.setEnd(node,offset+4);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        }""")
+        self.page.locator('.cdx-vocabulary-action').click()
+        self.page.wait_for_function('fixture.summaries.length===1')
+        result=self.page.evaluate('fixture.summaries[0]')
+        self.assertEqual(result['term'], 'bank')
+        self.assertTrue('SECOND_MEANING bank by the river.' in result['context'])
+        self.assertNotIn('FIRST_MEANING', result['context'])
+        self.assertLessEqual(len(result['context']), 1600)
+
+    def test_context_tracks_phrase_across_inline_nodes(self):
+        self.page.evaluate("""() => {
+          const answer=document.querySelector('#answer');
+          answer.replaceChildren(document.createTextNode('FIRST_MEANING race condition. '+'earlier text '.repeat(180)));
+          const prefix=document.createElement('span');prefix.textContent='SECOND_MEANING ';
+          const first=document.createElement('strong');first.textContent='race ';
+          const last=document.createElement('code');last.textContent='condition';
+          answer.append(prefix,first,last,document.createTextNode(' in concurrent code.'));
+          const range=document.createRange();range.setStart(first.firstChild,0);range.setEnd(last.firstChild,9);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        }""")
+        self.page.locator('.cdx-vocabulary-action').click()
+        self.page.wait_for_function('fixture.summaries.length===1')
+        result=self.page.evaluate('fixture.summaries[0]')
+        self.assertEqual(result['term'], 'race condition')
+        self.assertTrue('SECOND_MEANING race condition in concurrent code.' in result['context'])
+        self.assertNotIn('FIRST_MEANING', result['context'])
+
+    def test_context_retains_160_character_selection_with_bounded_payload(self):
+        self.page.evaluate("""() => {
+          const node=document.querySelector('#answer').firstChild;
+          const prefix='before '.repeat(400),term='x'.repeat(160);
+          node.textContent=prefix+term+' after'.repeat(400);
+          const range=document.createRange();range.setStart(node,prefix.length);range.setEnd(node,prefix.length+term.length);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        }""")
+        self.page.locator('.cdx-vocabulary-action').click()
+        self.page.wait_for_function('fixture.summaries.length===1')
+        result=self.page.evaluate('fixture.summaries[0]')
+        self.assertEqual(result['term'], 'x'*160)
+        self.assertIn(result['term'], result['context'])
+        self.assertLessEqual(len(result['context']), 1600)
+        self.assertIn('before', result['context'])
+        self.assertIn('after', result['context'])
+
+    def test_context_centers_trimmed_selection_after_long_leading_whitespace(self):
+        self.page.evaluate("""() => {
+          const answer=document.querySelector('#answer');answer.style.whiteSpace='pre-wrap';
+          const prefix='FIRST_MEANING bank. ',padding=' '.repeat(2200),node=answer.firstChild;
+          node.textContent=prefix+padding+'bank SECOND_MEANING';
+          const range=document.createRange();range.setStart(node,prefix.length);range.setEnd(node,prefix.length+padding.length+4);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        }""")
+        self.page.locator('.cdx-vocabulary-action').click()
+        self.page.wait_for_function('fixture.summaries.length===1')
+        result=self.page.evaluate('fixture.summaries[0]')
+        self.assertEqual(result['term'], 'bank')
+        self.assertTrue('bank SECOND_MEANING' in result['context'])
+        self.assertNotIn('FIRST_MEANING', result['context'])
+        self.assertLessEqual(len(result['context']), 1600)
+
     def test_visual_capture_light_and_dark(self):
         self.select()
         self.page.locator('.cdx-vocabulary-action').wait_for()
