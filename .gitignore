@@ -6,6 +6,9 @@
 /labels.json.bak.tmp-*
 /assignments.json
 /assignments.json.tmp-*
+/vocabulary.json
+/vocabulary.json.tmp-*
+/vocabulary.json.lock/
 /runtime-status*.json*
 /launch-status.json
 /build-manifest.json
