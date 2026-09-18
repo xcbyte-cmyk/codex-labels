@@ -15,7 +15,7 @@ import re
 
 import prepare_runtime as builder
 
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
