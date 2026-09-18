@@ -126,6 +126,37 @@ class NotificationRendererTests(unittest.TestCase):
         self.page.get_by_role('menuitem', name='알림 연결 테스트').wait_for(state='visible')
         self.assertEqual(self.page.get_by_role('menuitem', name='알림 연결 테스트').count(), 1)
 
+    def show_notification_error(self):
+        self.page.evaluate("() => { addRow('task'); codexLabels.notifyThread = async () => { throw Error('알림 등록 필요'); }; }")
+        self.page.locator('.cdx-label').click()
+        self.page.get_by_role('menuitem', name='알림 연결 테스트').click()
+        self.page.get_by_role('button', name='알림 메시지 닫기').wait_for()
+
+    def test_error_can_be_dismissed_by_button_and_escape(self):
+        self.show_notification_error()
+        self.page.get_by_role('button', name='알림 메시지 닫기').click()
+        self.assertEqual(self.page.locator('#codex-labels-notification-status').count(), 0)
+        self.page.get_by_role('menuitem', name='알림 연결 테스트').click()
+        self.page.get_by_role('button', name='알림 메시지 닫기').wait_for()
+        self.page.keyboard.press('Escape')
+        self.assertEqual(self.page.locator('#codex-labels-notification-status').count(), 0)
+
+    def test_repeated_error_resets_auto_dismiss_timer(self):
+        self.page.clock.install()
+        self.show_notification_error()
+        self.page.clock.fast_forward(11000)
+        self.page.get_by_role('menuitem', name='알림 연결 테스트').click()
+        self.page.clock.fast_forward(11000)
+        self.assertEqual(self.page.locator('#codex-labels-notification-status').count(), 1)
+        self.page.clock.fast_forward(1100)
+        self.assertEqual(self.page.locator('#codex-labels-notification-status').count(), 0)
+
+    def test_successful_retry_clears_previous_error(self):
+        self.show_notification_error()
+        self.page.evaluate("codexLabels.notifyThread = async () => ({accepted: true})")
+        self.page.get_by_role('menuitem', name='알림 연결 테스트').click()
+        self.page.locator('#codex-labels-notification-status').wait_for(state='detached')
+
     def test_cross_window_cancellation_prevents_obsolete_late_navigation(self):
         self.page.clock.install()
         self.activate()

@@ -14,6 +14,14 @@
       hostId: row.getAttribute('data-app-action-sidebar-thread-host-id') || 'local',
       kind} : null;
   }
+  let messageTimer;
+  function dismissMessage() {
+    clearTimeout(messageTimer);
+    document.getElementById('codex-labels-notification-status')?.remove();
+  }
+  function dismissOnEscape(event) {
+    if (event.key === 'Escape') dismissMessage();
+  }
   function message(text) {
     let box = document.getElementById('codex-labels-notification-status');
     if (!box) {
@@ -21,10 +29,22 @@
       box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
       Object.assign(box.style, {position: 'fixed', bottom: '20px', right: '20px',
         maxWidth: '400px', padding: '12px', background: '#202123', color: '#fff',
-        border: '1px solid #777', borderRadius: '8px', zIndex: '2147483647', fontSize: '13px'});
+        border: '1px solid #777', borderRadius: '8px', zIndex: '2147483647', fontSize: '13px',
+        display: 'flex', alignItems: 'flex-start', gap: '12px'});
+      const content = document.createElement('span');
+      content.dataset.notificationMessage = '';
+      Object.assign(content.style, {minWidth: '0', overflowWrap: 'anywhere'});
+      const close = document.createElement('button');
+      close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', '알림 메시지 닫기');
+      Object.assign(close.style, {border: '0', background: 'transparent', color: 'inherit',
+        cursor: 'pointer', fontSize: '20px', lineHeight: '24px', padding: '0 4px', flexShrink: '0'});
+      close.addEventListener('click', dismissMessage);
+      box.append(content, close);
       document.body.append(box);
     }
-    box.textContent = text;
+    box.querySelector('[data-notification-message]').textContent = text;
+    clearTimeout(messageTimer);
+    messageTimer = setTimeout(dismissMessage, 12000);
   }
   function findRow(target) {
     for (const row of document.querySelectorAll(selector)) {
@@ -48,7 +68,7 @@
       api.acknowledgeActivation(target.eventId, result).catch(() => {});
       if (result === 'thread-not-found') message('알림의 작업이 현재 목록에 없습니다. 해당 프로젝트를 펼친 뒤 알림을 다시 클릭하세요.');
       else if (result === 'failed') message('작업 열기에 실패했습니다. Codex Labels 창에서 작업을 확인하세요.');
-      else document.getElementById('codex-labels-notification-status')?.remove();
+      else dismissMessage();
     }
     function attempt() {
       if (finished || disposed) return;
@@ -80,6 +100,7 @@
       try {
         await api.notifyThread({...target, title: 'Codex Labels 연결 테스트',
           body: '이 알림을 클릭하면 선택한 작업의 열기를 요청합니다.'});
+        dismissMessage();
         button.textContent = '테스트 알림 전송 요청됨';
       } catch (error) {
         message(error?.message || '알림 전송 요청에 실패했습니다.');
@@ -103,10 +124,12 @@
   });
   document.addEventListener('click', capture, true);
   document.addEventListener('keydown', capture, true);
+  document.addEventListener('keydown', dismissOnEscape, true);
   window.addEventListener('pagehide', () => {
-    disposed = true; cancelPending(); cancelAnimationFrame(menuFrame); unsubscribe();
+    disposed = true; cancelPending(); cancelAnimationFrame(menuFrame); unsubscribe(); dismissMessage();
     document.removeEventListener('click', capture, true);
     document.removeEventListener('keydown', capture, true);
+    document.removeEventListener('keydown', dismissOnEscape, true);
   }, {once: true});
   api.activationReady().catch(() => message('알림 연결 초기화에 실패했습니다. Codex Labels를 다시 실행하세요.'));
 })();
