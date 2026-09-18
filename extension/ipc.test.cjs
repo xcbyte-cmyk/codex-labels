@@ -22,16 +22,17 @@ function mainHarness(t) {
     acknowledge: (...args) => { calls.push(['ack', ...args]); return true; }
   };
   const mockFs = {mkdirSync() {}, writeFileSync() {}, renameSync() {}, unlinkSync() {},
-    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : '/* labels */'};
+    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : '/* labels */'};
   const dirname = path.resolve('fixture', '.vite', 'build');
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {
     __dirname: dirname, process: {platform: 'win32', env: {LOCALAPPDATA: path.resolve('fixture', 'Local')},
-      execPath: path.resolve('fixture', 'ChatGPT.exe'), pid: 123, versions: {electron: 'test'}},
+      execPath: path.resolve('fixture', 'ChatGPT.exe'), resourcesPath:path.resolve('fixture','resources'), pid: 123, versions: {electron: 'test'}},
     setTimeout, clearTimeout, console, URL,
     require: name => {
       if (name === 'electron') return {app, ipcMain: {handle: (channel, fn) => handlers.set(channel, fn)},
         shell: {openPath: async () => ''}, BrowserWindow: {getAllWindows: () => windows, fromWebContents: () => null}, Notification: {}};
       if (name === 'node:fs') return mockFs;
+      if (name === './codex-labels/vocabulary-ipc.cjs') return {registerVocabulary: () => ({dispose(){}})};
       if (name === './codex-labels-store.cjs') return {createStore: () => store};
       if (name === './codex-labels/snapshot-cache.cjs') return {createSnapshotCache: (value, directory, options) => {
         changed = options.onChange;
@@ -115,7 +116,7 @@ test('notification capture source is injected before legacy stopImmediatePropaga
   event.sender.executeJavaScript = async value => { source = value; };
   h.app.emit('web-contents-created', {}, event.sender);
   event.sender.emit('did-finish-load');
-  assert.equal(source, '/* notification */\n/* labels */');
+  assert.equal(source, '/* notification */\n/* vocabulary */\n/* labels */');
 });
 test('preload subscriptions hide the native event and return an unsubscribe function', () => {
   let api, removed;
