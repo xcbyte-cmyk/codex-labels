@@ -24,7 +24,10 @@ def write_zip(executable, destination, source_commit, license_files):
     files += license_files
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
         for source, name in files:
-            archive.write(source, name)
+            if name.endswith('.cmd'):
+                archive.writestr(name, source.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
+            else:
+                archive.write(source, name)
         archive.writestr('build-info.json', json.dumps({'version': VERSION, 'sourceCommit': source_commit,
             'supportedAppVersion': builder.SUPPORTED_APP_VERSION, 'containsCodexBinaries': False}, indent=2))
 
