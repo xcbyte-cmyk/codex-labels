@@ -93,6 +93,17 @@ class VocabularyRendererTests(unittest.TestCase):
         self.page.get_by_role('button', name='채팅에 추가', exact=True).click()
         self.assertEqual(self.page.evaluate('nativeClicks'), 1)
 
+    def test_vocabulary_action_has_visible_separator_from_native_action(self):
+        self.select()
+        separator = self.page.locator('.cdx-vocabulary-action').evaluate('''node => {
+          const style = getComputedStyle(node, '::before');
+          return {content: style.content, width: style.width, background: style.backgroundColor, opacity: style.opacity};
+        }''')
+        self.assertEqual(separator['content'], '""')
+        self.assertEqual(separator['width'], '1px')
+        self.assertNotEqual(separator['background'], 'rgba(0, 0, 0, 0)')
+        self.assertEqual(separator['opacity'], '0.34')
+
     def test_closed_dialog_does_not_accept_late_result(self):
         self.page.evaluate('fixture.hold=true')
         self.open_selected()

@@ -9,7 +9,8 @@
   const buttons=new Set();
   const style=document.createElement('style');style.id='cdx-vocabulary-style';
   style.textContent=`
-    .cdx-vocabulary-action{white-space:nowrap;flex-shrink:0}
+    .cdx-vocabulary-action{position:relative;white-space:nowrap;flex-shrink:0;margin-inline-start:2px;padding-inline-start:10px!important}
+    .cdx-vocabulary-action::before{content:"";position:absolute;inset-block:4px;inset-inline-start:0;width:1px;background:currentColor;opacity:.34;pointer-events:none}
     #cdx-vocabulary{position:fixed;inset:0;margin:auto;--vb-bg:var(--color-surface,#fff);--vb-soft:var(--color-surface-secondary,#f5f5f5);--vb-ink:var(--color-text,#202123);--vb-muted:var(--color-text-secondary,#70747b);--vb-line:var(--color-border,#d9dce0);box-sizing:border-box;width:min(780px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 48px);padding:0;border:1px solid var(--vb-line);border-radius:18px;background:var(--vb-bg);color:var(--vb-ink);box-shadow:0 24px 90px #0005;font:13px/1.6 'Segoe UI','Malgun Gothic',sans-serif;overflow:auto}
     .dark #cdx-vocabulary{--vb-bg:var(--color-surface,#202123);--vb-soft:var(--color-surface-secondary,#292a2e);--vb-ink:var(--color-text,#f0f1f3);--vb-muted:var(--color-text-secondary,#a6a9b1);--vb-line:var(--color-border,#41434a);color-scheme:dark}
     #cdx-vocabulary::backdrop{background:#0006}#cdx-vocabulary *{box-sizing:border-box}#cdx-vocabulary [hidden]{display:none!important}
