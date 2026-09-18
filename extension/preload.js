@@ -3,9 +3,17 @@
   const {contextBridge, ipcRenderer} = require('electron');
   contextBridge.exposeInMainWorld('codexLabels', {
     vocabularyRead: () => ipcRenderer.invoke('codex-labels:vocabulary-read'),
+    onVocabularyChanged: callback => {
+      if(typeof callback !== 'function') throw new TypeError('callback must be a function');
+      // Only an invalidation signal crosses the bridge, never the native event.
+      const listener = () => callback();
+      ipcRenderer.on('codex-labels:vocabulary-changed', listener);
+      return () => ipcRenderer.removeListener('codex-labels:vocabulary-changed', listener);
+    },
     vocabularySummarize: value => ipcRenderer.invoke('codex-labels:vocabulary-summarize', value),
     vocabularyCancel: () => ipcRenderer.invoke('codex-labels:vocabulary-cancel'),
-    vocabularySave: (id, revision) => ipcRenderer.invoke('codex-labels:vocabulary-save', id, revision),
+    vocabularySave: (id, revision, options) => ipcRenderer.invoke('codex-labels:vocabulary-save', id, revision, options),
+    vocabularyEdit: (id, patch, revision) => ipcRenderer.invoke('codex-labels:vocabulary-edit', id, patch, revision),
     vocabularyDelete: (id, revision) => ipcRenderer.invoke('codex-labels:vocabulary-delete', id, revision),
     read: knownVersion => ipcRenderer.invoke('codex-labels:read', knownVersion),
     onChanged: callback => {
