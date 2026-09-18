@@ -470,7 +470,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
             else:
                 exe = require_ready(root)
         except RuntimeError:
-            if running_apps():
+            if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
             try:
                 base = None if source is None and valid_runtime(root, root/'runtime/app') else find_source(source)
@@ -485,14 +485,14 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
                 recovery.failed(root, error, payload_fingerprint())
                 if recovery.state(root).get('tools'):
                     return recovery.schedule(root, Path(__file__))
-    existing = running_apps()
-    if any(app != exe.resolve() for app in existing):
-        raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')
     if shortcut:
         create_shortcut(root)
     if select_accounts:
         progress('계정 선택기를 준비했습니다', 100)
         return {'selectorReady': True, 'updateError': update_error}
+    existing = running_apps()
+    if any(app != exe.resolve() for app in existing):
+        raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')
     profile = profile_path()
     profile.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
