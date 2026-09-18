@@ -296,7 +296,7 @@
         if(busy||state.saving||state.restarting)return;busy=true;updateControls();
         message.textContent=install?'다운로드하고 파일을 검증하고 있습니다…':'새 버전을 확인하고 있습니다…';
         try{
-          result=await (install?api.stageUpdate():api.checkUpdate());showUpdateStatus();
+          result={...result,...await (install?api.stageUpdate():api.checkUpdate())};showUpdateStatus();
         }catch(error){message.textContent=(error?.message||String(error))+' 다시 시도해 주세요.';}
         finally{busy=false;updateControls();}
       }
@@ -317,13 +317,20 @@
       }
       async function readUpdateStatus(){
         busy=true;updateControls();message.textContent='이 PC의 업데이트 상태를 확인하고 있습니다…';
-        try{result=await api.updateStatus();showUpdateStatus();}
-        catch(error){message.textContent='이 PC의 업데이트 상태를 읽지 못했습니다. 업데이트 확인을 눌러 다시 시도해 주세요. '+(error?.message||String(error));}
+        try{
+          if(typeof api.updateStatus==='function'){
+            try{result=await api.updateStatus();showUpdateStatus();}catch{result=null;}
+          }
+          if(result?.pendingRestart)return;
+          message.textContent='공개 최신 버전을 자동으로 확인하고 있습니다…';
+          result={...result,...await api.checkUpdate()};showUpdateStatus();
+        }
+        catch(error){message.textContent='공개 최신 버전을 확인하지 못했습니다. 업데이트 확인을 눌러 다시 시도해 주세요. '+(error?.message||String(error));}
         finally{busy=false;updateControls();}
       }
       const actions=element('div','cdx-update-actions');actions.append(check,download,restart);
       updates.append(summary,versions,codexNotice,message,restartNotice,editNotice,actions);editor.append(updates);
-      if(typeof api.updateStatus==='function')readUpdateStatus();
+      readUpdateStatus();
     }
     const appearanceSpecs=[['fontSizePx','글자 크기 (px)',8,32],['borderRadiusPx','둥근 모서리 (px)',0,30],['horizontalPaddingPx','좌우 여백 (px)',0,30],['verticalPaddingPx','상하 여백 (px)',0,20],['gapPx','제목과의 간격 (px)',0,40]];
     for(const [key,labelText,min,max] of appearanceSpecs){
