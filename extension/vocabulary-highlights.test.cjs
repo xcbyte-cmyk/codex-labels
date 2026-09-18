@@ -4,9 +4,9 @@ const assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
 const {randomUUID}=require('node:crypto');
-const {normalizedMap,termKey,createMatcher}=require('./vocabulary-v2-renderer.js');
-const {registerVocabulary}=require('./vocabulary-v2-ipc.cjs');
-const {createVocabularyStore,MODEL,EFFORT}=require('./vocabulary-v2.cjs');
+const {normalizedMap,termKey,createMatcher}=require('./vocabulary-renderer.js');
+const {registerVocabulary}=require('./vocabulary-ipc.cjs');
+const {createVocabularyStore,MODEL,EFFORT}=require('./vocabulary.cjs');
 const terms=(...words)=>words.map((term,i)=>({id:String(i),term,meaning:term+' 뜻'}));
 const matches=(words,text)=>createMatcher(terms(...words)).find(text).map(m=>text.slice(m.start,m.end));
 

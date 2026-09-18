@@ -29,8 +29,7 @@ if (process.platform === 'win32') {
 }
 const store = createStore(configDirectory);
 const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
-const vocabularyV2 = accountProfile?.vocabularyVersion === 2;
-const {registerVocabulary} = require(vocabularyV2 ? './codex-labels/vocabulary-v2-ipc.cjs' : './codex-labels/vocabulary-ipc.cjs');
+const {registerVocabulary} = require('./codex-labels/vocabulary-ipc.cjs');
 const vocabulary = registerVocabulary({ipcMain,check,directory:configDirectory,
   executable:path.join(process.resourcesPath,'codex.exe'),home:accountProfile?.home || process.env.CODEX_HOME || path.join(app.getPath('home'),'.codex')});
 const statusPath = path.join(configDirectory, 'runtime-status.json');
@@ -141,7 +140,7 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 });
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
-  fs.readFileSync(path.join(__dirname, vocabularyV2 ? 'codex-labels/vocabulary-v2-renderer.js' : 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
+  fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8') + (accountProfile ? `\n(() => {
     if (document.getElementById('codex-labels-account-name')) return;
     const badge = document.createElement('div'); badge.id = 'codex-labels-account-name';

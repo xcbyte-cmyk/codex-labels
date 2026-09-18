@@ -44,7 +44,7 @@ function resolveAccount(root, argv = process.argv, env = process.env) {
   }
   Object.assign(env, {CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_ELECTRON_USER_DATA_PATH: profile,
     CODEX_APP_SERVER_FORCE_CLI: '1', CODEX_LABELS_ACCOUNT_ID: id});
-  return {id, name: data.name, directory, home, profile, vocabularyVersion: data.vocabularyVersion === 2 ? 2 : 1};
+  return {id, name: data.name, directory, home, profile};
 }
 
 function disabledNotifications() {

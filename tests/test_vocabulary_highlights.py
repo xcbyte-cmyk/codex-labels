@@ -20,7 +20,7 @@ class VocabularyHighlightTests(unittest.TestCase):
         from playwright.sync_api import sync_playwright
         cls.driver = sync_playwright().start()
         cls.browser = cls.driver.chromium.launch(headless=True, executable_path=os.environ.get('CODEX_LABELS_CHROMIUM'))
-        cls.source = (ROOT/'extension/vocabulary-v2-renderer.js').read_text(encoding='utf-8')
+        cls.source = (ROOT/'extension/vocabulary-renderer.js').read_text(encoding='utf-8')
 
     @classmethod
     def tearDownClass(cls):
