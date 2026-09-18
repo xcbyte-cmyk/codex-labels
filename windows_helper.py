@@ -696,7 +696,7 @@ def main():
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         message = 'Codex Labels: ' + str(error)
         print(message, flush=True)
-        if args.action == 'launch' and getattr(sys, 'frozen', False):
+        if args.action == 'launch' and getattr(sys, 'frozen', False) and not args.no_ui:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'Codex Labels', 0x10)
         return 1

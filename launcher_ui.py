@@ -19,7 +19,7 @@ def run(operation):
     bar = ttk.Progressbar(frame, maximum=100, mode='determinate'); bar.pack(fill='x')
     actions = tk.Frame(frame, bg='#202123'); actions.pack(fill='x', pady=(12, 0))
     events = queue.Queue()
-    state = {'working': True, 'code': 1}
+    state = {'working': True, 'code': 1, 'poll_timer': None}
 
     def progress(text, percent):
         events.put(('progress', (text, percent)))
@@ -60,9 +60,16 @@ def run(operation):
                 message.set('실행하지 못했습니다.\n' + value)
                 ttk.Button(actions, text='닫기', command=close).pack(side='right')
                 ttk.Button(actions, text='다시 시도', command=start).pack(side='right', padx=8)
-        window.after(100, poll)
+        state['poll_timer'] = window.after(100, poll)
+
+    def cancel_poll(event):
+        if event.widget is window and state['poll_timer'] is not None:
+            try: window.after_cancel(state['poll_timer'])
+            except tk.TclError: pass
+            state['poll_timer'] = None
 
     window.protocol('WM_DELETE_WINDOW', close)
-    window.after(100, poll); window.after(50, start)
+    window.bind('<Destroy>', cancel_poll)
+    state['poll_timer'] = window.after(100, poll); window.after(50, start)
     window.mainloop()
     return state['code']
