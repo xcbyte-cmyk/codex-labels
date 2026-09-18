@@ -22,7 +22,10 @@ jobs:
       - name: Store, notifications, cache and IPC tests
         run: node --test
       - name: Synthetic builder tests
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install psutil==7.2.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -v
       - name: Extension syntax
         shell: pwsh
         run: |

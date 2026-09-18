@@ -2,6 +2,11 @@
 (() => {
   const {contextBridge, ipcRenderer} = require('electron');
   contextBridge.exposeInMainWorld('codexLabels', {
+    vocabularyRead: () => ipcRenderer.invoke('codex-labels:vocabulary-read'),
+    vocabularySummarize: value => ipcRenderer.invoke('codex-labels:vocabulary-summarize', value),
+    vocabularyCancel: () => ipcRenderer.invoke('codex-labels:vocabulary-cancel'),
+    vocabularySave: (id, revision) => ipcRenderer.invoke('codex-labels:vocabulary-save', id, revision),
+    vocabularyDelete: (id, revision) => ipcRenderer.invoke('codex-labels:vocabulary-delete', id, revision),
     read: knownVersion => ipcRenderer.invoke('codex-labels:read', knownVersion),
     onChanged: callback => {
       if (typeof callback !== 'function') throw new TypeError('callback must be a function');

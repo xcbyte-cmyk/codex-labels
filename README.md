@@ -4,7 +4,13 @@ Windows용 Codex의 프로젝트·작업 제목 앞에 상태 라벨을 표시�
 
 An unofficial, version-gated Windows customization. This repository contains extension source and tests, not Codex binaries or user data.
 
-## 상태 라벨
+## 계정별 작업 창 — 로컬 개발 기능
+
+**계정별 실행.cmd → 새 계정 창 추가 → 선택한 창 열기**로 ChatGPT 계정마다 별도 창을 사용할 수 있습니다.
+각 창에서 직접 로그인하며 로그인·대화·라벨은 분리됩니다. 기존 기본 창은 그대로 유지합니다.
+창 이름은 별칭이며 실제 로그인 계정은 각 창의 계정 메뉴에서 확인하세요. [분리 범위와 제한](docs/account-windows.md)
+
+## 상태 라벨 사용
 
 Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 배지를 다시 누르면 상태를 변경하거나 해제할 수 있습니다. 같은 메뉴의 **라벨 설정…**에서 이름, 배경색, 글자색, 설명, 순서, 사용 여부, 글자 크기, 모서리와 여백을 수정합니다. 저장 전 미리보기와 취소, 외부 편집 충돌 차단, 직전 설정 백업을 제공합니다.
 

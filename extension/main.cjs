@@ -8,11 +8,14 @@ const {createStore} = require('./codex-labels-store.cjs');
 const {createSnapshotCache} = require('./codex-labels/snapshot-cache.cjs');
 const {createNotifications} = require('./codex-labels/notifications.cjs');
 const {configDirectory: installedConfigDirectory} = require('./codex-labels-location.json');
+const {resolveAccount, disabledNotifications} = require('./codex-labels/account-profile.cjs');
+const accountProfile = resolveAccount(installedConfigDirectory);
+const windowTitle = accountProfile ? `Codex Labels · ${accountProfile.name}` : 'Codex Labels';
 // Installer smoke uses a fresh config, profile and CODEX_HOME, never account data.
 const smokeDirectory = process.env.CODEX_LABELS_SMOKE_DIRECTORY;
-const configDirectory = smokeDirectory || installedConfigDirectory;
+const configDirectory = smokeDirectory || accountProfile?.directory || installedConfigDirectory;
 const {createUpdater} = require('./codex-labels/updates.cjs');
-const updater = createUpdater(configDirectory, {quit: () => app.quit()});
+const updater = createUpdater(installedConfigDirectory, {quit: () => app.quit()});
 app.once('ready', () => { if (!smokeDirectory) updater.prime().catch(() => {}); });
 // Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
 // on the SAME Labels profile, without modifying CODEX_HOME or the original app.
@@ -26,8 +29,13 @@ if (process.platform === 'win32') {
 }
 const store = createStore(configDirectory);
 const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
+const {registerVocabulary} = require('./codex-labels/vocabulary-ipc.cjs');
+const vocabulary = registerVocabulary({ipcMain,check,directory:configDirectory,
+  executable:path.join(process.resourcesPath,'codex.exe'),home:accountProfile?.home || process.env.CODEX_HOME || path.join(app.getPath('home'),'.codex')});
 const statusPath = path.join(configDirectory, 'runtime-status.json');
 let status = {version: 3, status: 'starting', settingsAvailable: true,
+    accountProfileId: accountProfile?.id || null,
+    codexHome: accountProfile?.home || null,
   launchToken: process.env.CODEX_LABELS_LAUNCH_TOKEN || null,
   processId: process.pid, executable: process.execPath, electronVersion: process.versions.electron || null,
   configPath: store.configPath, userDataPath: app.getPath('userData'), rows: 0, badges: 0};
@@ -95,7 +103,7 @@ function broadcastConfigChange() {
     } catch { /* A closing renderer must not prevent updates to other windows. */ }
   }
 }
-const notifications = createNotifications({app, shell, Notification, profile, defaultProfile,
+const notifications = accountProfile ? disabledNotifications() : createNotifications({app, shell, Notification, profile, defaultProfile,
   getWindows: () => BrowserWindow.getAllWindows(), trustedContent,
   onStatus: notification => recordStatus({notification})});
 ipcMain.handle('codex-labels:read', (event, knownVersion) => { check(event); return cache.snapshot(knownVersion); });
@@ -116,10 +124,13 @@ ipcMain.handle('codex-labels:open-config', async event => {
   check(event); const result = await shell.openPath(store.configPath); if (result) throw Error(result); return true;
 });
 ipcMain.handle('codex-labels:update-check', event => { check(event); return updater.check(); });
-ipcMain.handle('codex-labels:update-stage', event => { check(event); return updater.stage(); });
+function checkUpdateWindow() {
+  if (accountProfile) throw Error('계정별 창을 모두 닫고 기본 Labels에서 업데이트하세요.');
+}
+ipcMain.handle('codex-labels:update-stage', event => { check(event); checkUpdateWindow(); return updater.stage(); });
 ipcMain.handle('codex-labels:update-status', event => { check(event); return updater.status(); });
-ipcMain.handle('codex-labels:restart-update', event => { check(event); return updater.restart(); });
-ipcMain.handle('codex-labels:rollback-update', event => { check(event); return updater.rollback(); });
+ipcMain.handle('codex-labels:restart-update', event => { check(event); checkUpdateWindow(); return updater.restart(); });
+ipcMain.handle('codex-labels:rollback-update', event => { check(event); checkUpdateWindow(); return updater.rollback(); });
 ipcMain.handle('codex-labels:notify-thread', (event, value) => { check(event); return notifications.notify(value); });
 ipcMain.handle('codex-labels:notification-status', event => { check(event); return notifications.status(); });
 ipcMain.handle('codex-labels:activation-ready', event => { check(event); ownsSharedStatus = true; notifications.rendererReady(event.sender); return true; });
@@ -129,7 +140,15 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 });
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
-  fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8');
+  fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
+  fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8') + (accountProfile ? `\n(() => {
+    if (document.getElementById('codex-labels-account-name')) return;
+    const badge = document.createElement('div'); badge.id = 'codex-labels-account-name';
+    badge.textContent = ${JSON.stringify(accountProfile?.name)};
+    badge.title = '계정별 작업 창 · 실제 로그인 계정은 계정 메뉴에서 확인하세요';
+    badge.style.cssText = 'position:fixed;top:7px;left:50%;transform:translateX(-50%);z-index:2147483646;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 12px;border:1px solid #64748b;border-radius:12px;background:#172033;color:#e2e8f0;font:12px/1.4 "Segoe UI","Malgun Gothic",sans-serif;pointer-events:none';
+    document.body.appendChild(badge);
+  })();` : '');
 const titledWindows = new WeakSet();
 app.on('web-contents-created', (_event, contents) => {
   contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
@@ -140,18 +159,25 @@ app.on('web-contents-created', (_event, contents) => {
     if (!trustedContent(contents)) return;
     const window = BrowserWindow.fromWebContents(contents);
     if (window && !window.isDestroyed()) {
-      window.setTitle('Codex Labels');
+      window.setTitle(windowTitle);
       if (!titledWindows.has(window)) {
         titledWindows.add(window);
         window.on('page-title-updated', event => {
-          if (trustedContent(contents) && !window.isDestroyed()) { event.preventDefault(); window.setTitle('Codex Labels'); }
+          if (trustedContent(contents) && !window.isDestroyed()) { event.preventDefault(); window.setTitle(windowTitle); }
         });
       }
     }
-    contents.executeJavaScript(source).catch(() => recordStatus({status: 'renderer-initialization-failed'}));
+    contents.executeJavaScript(source).then(() => {
+      // Fresh accounts show onboarding, not a sidebar. A loaded trusted
+      // renderer is UI readiness; it is deliberately not login verification.
+      if (accountProfile) {
+        ownsSharedStatus = true;
+        recordStatus({status: 'active', accountWindowReady: true});
+      }
+    }).catch(() => recordStatus({status: 'renderer-initialization-failed'}));
   });
 });
-app.once('will-quit', () => { notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
+app.once('will-quit', () => { vocabulary.dispose(); notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
 recordStatus({notification: notifications.status()});
 // Exercise the shipped Electron/preload/renderer bridge without account onboarding.
 if (smokeDirectory) app.whenReady().then(() => {
