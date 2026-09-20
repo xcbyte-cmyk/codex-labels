@@ -4,7 +4,13 @@ Windows용 Codex의 프로젝트·작업 제목 앞에 상태 라벨을 표시�
 
 An unofficial, version-gated Windows customization. This repository contains extension source and tests, not Codex binaries or user data.
 
-## 상태 라벨
+## 계정별 작업 창 — 로컬 개발 기능
+
+**계정별 실행.cmd → 새 계정 창 추가 → 선택한 창 열기**로 ChatGPT 계정마다 별도 창을 사용할 수 있습니다.
+각 창에서 직접 로그인하며 로그인·대화·라벨은 분리됩니다. 기존 기본 창은 그대로 유지합니다.
+창 이름은 별칭이며 실제 로그인 계정은 각 창의 계정 메뉴에서 확인하세요. [분리 범위와 제한](docs/account-windows.md)
+
+## 상태 라벨 사용
 
 Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 배지를 다시 누르면 상태를 변경하거나 해제할 수 있습니다. 같은 메뉴의 **라벨 설정…**에서 이름, 배경색, 글자색, 설명, 순서, 사용 여부, 글자 크기, 모서리와 여백을 수정합니다. 저장 전 미리보기와 취소, 외부 편집 충돌 차단, 직전 설정 백업을 제공합니다.
 
@@ -16,7 +22,9 @@ Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 
 
 ## 지원 환경
 
-Windows x64, Microsoft Store Codex **패키지 `26.911.7940.0` / 내부 앱 `26.911.61220`**을 지원합니다. 배포 ZIP은 Python·Git·Node.js 설치 없이 사용할 수 있습니다. 소스에서 준비하려면 Python 3.11 이상, Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
+v0.3.0은 Windows x64, Microsoft Store Codex **패키지 `26.915.4065.0` / 내부 앱 `26.915.31945`**을 지원합니다. 배포 ZIP은 Python·Git·Node.js 설치 없이 사용할 수 있습니다. 소스에서 준비하려면 Python 3.11 이상이 필요하며 Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
+
+별도 실행본에는 MSIX 패키지 ID가 없으므로 계정 환경 선택 후 번들 `resources/codex.exe`를 `CODEX_CLI_PATH`로 설정하고 `CODEX_APP_SERVER_FORCE_CLI=1`로 실행합니다. 원본 Store 앱의 패키지 전용 초기화 경로 대신 번들 CLI를 사용합니다.
 
 앱 프로필은 `%LOCALAPPDATA%\CodexLabels\User Data`로 분리하지만 **CODEX_HOME과 작업 저장소는 원본과 공유**합니다. 별도 프로필은 작업 파일 전체의 샌드박스가 아닙니다.
 
@@ -24,8 +32,12 @@ Windows x64, Microsoft Store Codex **패키지 `26.911.7940.0` / 내부 앱 `26.
 
 1. 해당 PC에 위 지원 버전의 공식 Codex를 설치합니다.
 2. [최신 릴리즈](https://github.com/xcbyte-cmyk/codex-labels/releases/latest)에서 `Codex-Labels-...-windows-x64.zip`을 받고, 계속 사용할 폴더에 압축을 풉니다.
-3. **설치.cmd**를 한 번 실행합니다. 설치본 자동 탐색, 버전 검사, 라벨 실행본 준비, 바탕화면 바로가기를 생성합니다.
-4. 이후에는 **바탕화면 Codex Labels** 또는 **실행.cmd**만 사용합니다.
+3. **설치.cmd**를 한 번 실행합니다. 실행본과 바탕화면 바로가기를 준비한 뒤 **계정 선택기**를 엽니다.
+4. 이후에는 **바탕화면 Codex Labels**, **실행.cmd** 또는 **CodexLabelsHelper.exe**를 실행해 계정을 선택합니다. 기존 Labels 로그인과 작업을 사용하려면 **기본 프로필 열기**를 선택합니다.
+
+계정 선택기에서 새 계정 창을 만들거나 기존 계정을 선택할 수 있습니다. 선택한 창의 준비가 확인되면 선택기가 닫히며, 실패하면 선택기에 오류를 표시합니다. 계정 자료는 `%LOCALAPPDATA%\CodexLabels\AccountWindows`에 저장하므로 설치 폴더를 바꿔도 동일한 목록을 사용합니다. 이전 설치 폴더 안의 `accounts` 자료는 자동 이전하지 않습니다. 기본 프로필은 기존 `CODEX_HOME`을 사용하며 새 계정 창은 계정별 로그인·작업·단어장 저장소를 사용합니다.
+
+명령행에서 기본 프로필을 직접 열려면 `CodexLabelsHelper.exe launch-direct`를 사용합니다. 기존 `launch --wait-pid` 업데이트 재시작 경로도 직접 실행을 유지합니다.
 
 공식 앱 실행 파일이나 계정 정보를 배포 ZIP에 포함하지 않습니다. 각 PC의 설치본으로 사본을 만들며, 로그인도 각 PC에서 합니다. 관리자 권한이나 PowerShell 실행 정책 변경 없이 동작합니다. 약 3GB의 여유 공간이 필요합니다.
 

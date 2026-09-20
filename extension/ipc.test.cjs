@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {createSnapshotCache} = require('./snapshot-cache.cjs');
-function mainHarness(t) {
+function mainHarness(t, account = null) {
   const handlers = new Map(), calls = [], paths = [], windows = [], sent = [];
   let changed, cache, reads = 0;
   let snapshot = {configRevision: 'initial', configError: null, config: {}, assignments: {}};
@@ -21,7 +21,8 @@ function mainHarness(t) {
     rendererReady: value => calls.push(['ready', value]),
     acknowledge: (...args) => { calls.push(['ack', ...args]); return true; }
   };
-  const mockFs = {mkdirSync() {}, writeFileSync() {}, renameSync() {}, unlinkSync() {},
+  const writes = [];
+  const mockFs = {mkdirSync() {}, writeFileSync: (file, value) => writes.push({file, value}), renameSync() {}, unlinkSync() {},
     readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : '/* labels */'};
   const dirname = path.resolve('fixture', '.vite', 'build');
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {
@@ -30,16 +31,17 @@ function mainHarness(t) {
     setTimeout, clearTimeout, console, URL,
     require: name => {
       if (name === 'electron') return {app, ipcMain: {handle: (channel, fn) => handlers.set(channel, fn)},
-        shell: {openPath: async () => ''}, BrowserWindow: {getAllWindows: () => windows, fromWebContents: () => null}, Notification: {}};
+        shell: {openPath: async () => ''}, BrowserWindow: {getAllWindows: () => windows, fromWebContents: content => windows.find(w => w.webContents === content)}, Notification: {}};
       if (name === 'node:fs') return mockFs;
-      if (name === './codex-labels/vocabulary-ipc.cjs') return {registerVocabulary: () => ({dispose(){}})};
       if (name === './codex-labels-store.cjs') return {createStore: () => store};
+      if (name === './codex-labels/vocabulary-ipc.cjs') return {registerVocabulary: () => ({dispose(){}})};
       if (name === './codex-labels/snapshot-cache.cjs') return {createSnapshotCache: (value, directory, options) => {
         changed = options.onChange;
         cache = createSnapshotCache(value, directory, {...options, watch: () => { const watcher = new EventEmitter(); watcher.close = () => {}; return watcher; }});
         return cache;
       }};
       if (name === './codex-labels/notifications.cjs') return {createNotifications: () => notifications};
+      if (name === './codex-labels/account-profile.cjs') return {resolveAccount: () => account, disabledNotifications: () => notifications};
       if (name === './codex-labels/updates.cjs') return {createUpdater: () => ({check: () => ({available:false}), stage: () => ({pendingRestart:true}), status: () => ({}), restart: () => ({restarting:true})})};
       if (name === './codex-labels-location.json') return {configDirectory: path.resolve('fixture', 'config')};
       return require(name);
@@ -52,8 +54,25 @@ function mainHarness(t) {
       getLastWebPreferences: () => ({preload: trustedPreload ? path.join(dirname, 'preload.js') : 'foreign-preload.js'})});
     return {sender: contents, senderFrame: contents.mainFrame};
   }
-  return {handlers, calls, paths, event, app, windows, sent, changed: () => changed(), cache, get reads() { return reads; }};
+  return {handlers, calls, paths, event, app, windows, sent, writes, changed: () => changed(), cache, get reads() { return reads; }};
 }
+test('account onboarding reports UI readiness without pretending login succeeded', async t => {
+  const account = {id:'a'.repeat(32), name:'회사 A', directory:path.resolve('fixture','account'), home:path.resolve('fixture','home')};
+  const h = mainHarness(t, account), contents = h.event().sender;
+  let title;
+  contents.executeJavaScript = async script => { assert.ok(script.includes('codex-labels-account-name')); };
+  const window = new EventEmitter(); Object.assign(window, {webContents:contents, isDestroyed:()=>false, setTitle:value=>{title=value;}});
+  h.windows.push(window);
+  h.app.emit('web-contents-created', {}, contents); contents.emit('did-finish-load');
+  await new Promise(resolve => setTimeout(resolve, 130));
+  assert.equal(title, 'Codex Labels · 회사 A');
+  const report = h.writes.map(w => {try{return JSON.parse(w.value);}catch{return null;}}).find(v => v?.accountWindowReady);
+  assert.equal(report.accountProfileId, account.id); assert.equal(report.status, 'active');
+  assert.equal(report.loginVerified, undefined);
+  for (const channel of ['codex-labels:update-stage','codex-labels:restart-update','codex-labels:rollback-update']) {
+    assert.throws(() => h.handlers.get(channel)(h.event()), /계정별 창/);
+  }
+});
 test('all new IPC operations reject foreign frames, origins and preload scripts', t => {
   const h = mainHarness(t);
   for (const channel of ['codex-labels:read', 'codex-labels:assign', 'codex-labels:save-config', 'codex-labels:notify-thread', 'codex-labels:notification-status', 'codex-labels:activation-ready', 'codex-labels:activation-ack', 'codex-labels:update-check', 'codex-labels:update-stage', 'codex-labels:update-status', 'codex-labels:restart-update']) {

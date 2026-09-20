@@ -15,8 +15,9 @@ import re
 import runtime_recovery as recovery
 
 import prepare_runtime as builder
+import account_profiles
 
-VERSION = '0.2.4'
+VERSION = '0.3.0'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
@@ -61,7 +62,7 @@ def find_source(explicit=None):
         except (ValueError, KeyError, OSError, RuntimeError):
             continue
     raise RuntimeError('지원하는 공식 Codex 설치본을 찾지 못했습니다. '
-        '이 패키지는 Store 26.911.7940.0 / 내부 앱 ' + builder.SUPPORTED_APP_VERSION +
+        '이 패키지는 ' + builder.VERSION + ' / 내부 앱 ' + builder.SUPPORTED_APP_VERSION +
         '용입니다. 다른 버전은 호환 패키지가 필요합니다. 원본 앱은 변경하지 않았습니다.')
 
 
@@ -74,7 +75,7 @@ def profile_path():
 
 def running_apps():
     text = powershell("@(Get-CimInstance Win32_Process -Filter \"Name='ChatGPT.exe'\" | "
-        "Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:LABELS_PROFILE_CHECK) } | "
+        "Where-Object { $_.CommandLine -and ($_.CommandLine.Contains($env:LABELS_PROFILE_CHECK) -or $_.CommandLine.Contains('--codex-labels-account=')) } | "
         "Select-Object -ExpandProperty ExecutablePath -Unique) | ConvertTo-Json -Compress",
         {'LABELS_PROFILE_CHECK': str(profile_path())})
     values = json.loads(text) if text else []
@@ -104,7 +105,7 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/'prepare_runtime.py', ASSETS/'windows_helper.py', ASSETS/'updater.py', ASSETS/'launcher_ui.py', ASSETS/'runtime_recovery.py', ASSETS/'labels.example.json']
+    files = [ASSETS/name for name in ('prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'labels.example.json')]
     files += sorted((ASSETS/'extension').glob('*.js'))
     files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
     for file in files:
@@ -171,6 +172,19 @@ def recover_runtime(root):
             return
 
 
+def move_runtime(source, target):
+    """Windows can briefly retain directory handles after a child exits."""
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            source.rename(target)
+            return
+        except OSError as error:
+            if getattr(error, 'winerror', None) not in (5, 32) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+
+
 def prepare(root, source=None, progress=None, *, verify_runtime=False):
     root = Path(root).resolve()
     refresh = source is None
@@ -216,9 +230,9 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
         if target.exists():
             previous = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
             recovery.checkpoint(root, previous, old_receipt, payload_fingerprint())
-            target.rename(previous)
+            move_runtime(target, previous)
             backup = previous
-        incoming.rename(target)
+        move_runtime(incoming, target)
         write_json(root/'build-manifest.json', receipt)
         recovery.prepared(root)
     except Exception:
@@ -226,14 +240,17 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
             # Preserve even an incomplete new runtime for diagnosis before restore.
             if target.exists():
                 target.rename(target.with_name('app.failed-' + uuid.uuid4().hex[:8]))
-            backup.rename(target)
+            move_runtime(backup, target)
             write_json(root/'build-manifest.json', read_receipt(root))
         raise
     finally:
         # Preserve an interrupted/failed candidate for diagnosis, never delete
         # user data or the previous runtime in this recovery path.
         if incoming.exists():
-            incoming.rename(incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
+            try:
+                move_runtime(incoming, incoming.with_name('app.failed-' + uuid.uuid4().hex[:8]))
+            except OSError:
+                pass  # Keep the candidate in place and retain the original failure.
     return {'ready': True, 'root': str(root), 'backup': str(backup) if backup else None}
 
 
@@ -383,17 +400,18 @@ def wait_for_parent(pid, root, token, progress, timeout=120):
         kernel.CloseHandle(handle)
 
 
-def wait_until_active(root, process, started, timeout=75, allow_forwarded=False):
+def wait_until_active(root, process, started, timeout=75, allow_forwarded=False, status_directory=None, account_id=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            status = json.loads((root/'runtime-status.json').read_text(encoding='utf-8'))
+            status = json.loads(((status_directory or root)/'runtime-status.json').read_text(encoding='utf-8'))
             updated = datetime.fromisoformat(status['updatedAt'].replace('Z', '+00:00')).timestamp()
             identity_matches = (status.get('launchToken') == process.labels_launch_token or
                                 process.labels_launch_token in status.get('recentLaunchTokens', []) or
                                 (not status.get('launchToken') and status.get('processId') == process.pid))
             if (status.get('status') == 'active' and identity_matches
-                    and updated >= started and Path(status['executable']).resolve() == root/'runtime/app/ChatGPT.exe'):
+                    and updated >= started and Path(status['executable']).resolve() == root/'runtime/app/ChatGPT.exe'
+                    and (account_id is None or status.get('accountProfileId') == account_id)):
                 return status
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -403,7 +421,51 @@ def wait_until_active(root, process, started, timeout=75, allow_forwarded=False)
     raise RuntimeError('앱 화면의 준비 완료를 확인하지 못했습니다. 열린 Labels 창을 확인해 주세요.')
 
 
-def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False):
+def delete_account(root, account_id, *, progress=None, shared=False):
+    import account_cleanup
+    root = Path(root).resolve()
+    with preparation_lock(root):
+        data_root = account_profiles.shared_root() if shared else root
+        return account_cleanup.delete_account(data_root, account_id, progress=progress,
+            stop=lambda data, key: account_cleanup.stop_account(data, key, runtime_root=root))
+
+
+def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=False):
+    root = Path(root).resolve()
+    progress = progress or (lambda *_: None)
+    # Account windows never silently fall back to the default launcher or an
+    # older runtime without account isolation support.
+    with preparation_lock(root):
+        exe = require_ready(root)
+        if shared and (read_receipt(root).get('accountHostProtocol') != 1 or not valid_runtime(root, root/'runtime/app')):
+            raise RuntimeError('이 실행본은 공통 계정 연결 규칙을 지원하지 않습니다.')
+        data_root = account_profiles.shared_root() if shared else root
+        account, directory, profile, env = account_profiles.launch_context(data_root, account_id)
+        for name, initial in [('labels.json', (ASSETS/'labels.example.json').read_bytes()),
+                              ('assignments.json', b'{"schemaVersion":1,"assignments":{}}\n')]:
+            try:
+                with (directory/name).open('xb') as file: file.write(initial)
+            except FileExistsError: pass
+        progress(account['name'] + ' 창을 열고 있습니다', 80)
+        started = time.time()
+        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile),
+            '--codex-labels-account=' + account_id,
+            *(['--codex-labels-account-protocol=1'] if shared else []),
+            '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
+            env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
+        status = {'version': 3, 'status': 'launch-requested', 'processId': process.pid,
+                  'accountProfileId': account_id, 'profile': str(profile), 'executable': str(exe)}
+        write_json(directory/'launch-status.json', status)
+        if wait_ready:
+            active = wait_until_active(root, process, started, allow_forwarded=True,
+                                       status_directory=directory, account_id=account_id)
+            status.update(status='active', processId=active['processId'])
+            write_json(directory/'launch-status.json', status)
+        return status
+
+
+def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False, select_accounts=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     progress('설치 상태를 확인하고 있습니다', 5)
@@ -424,7 +486,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
             else:
                 exe = require_ready(root)
         except RuntimeError:
-            if running_apps():
+            if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
             try:
                 base = None if source is None and valid_runtime(root, root/'runtime/app') else find_source(source)
@@ -439,11 +501,14 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
                 recovery.failed(root, error, payload_fingerprint())
                 if recovery.state(root).get('tools'):
                     return recovery.schedule(root, Path(__file__))
+    if shortcut:
+        create_shortcut(root)
+    if select_accounts:
+        progress('계정 선택기를 준비했습니다', 100)
+        return {'selectorReady': True, 'updateError': update_error}
     existing = running_apps()
     if any(app != exe.resolve() for app in existing):
         raise RuntimeError('다른 폴더의 Codex Labels가 실행 중입니다. 해당 Labels 창을 닫고 다시 실행하세요.')
-    if shortcut:
-        create_shortcut(root)
     profile = profile_path()
     profile.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -490,11 +555,24 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     return status
 
 
+def open_accounts(root):
+    import account_manager
+    data_root = account_profiles.shared_root()
+    return account_manager.run(data_root,
+        lambda _, key, **kw: launch_account(root, key, shared=True, **kw),
+        lambda _, key, **kw: delete_account(root, key, shared=True, **kw),
+        launch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, **kw),
+        close_on_launch=True)
+
+
 def main():
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
-    parser.add_argument('action', choices=['prepare', 'launch', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
+    parser.add_argument('action', choices=['accounts', 'account-create', 'account-list', 'account-launch', 'account-delete', 'prepare', 'launch', 'launch-direct', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
+    parser.add_argument('--account-id')
+    parser.add_argument('--name')
+    parser.add_argument('--confirm-delete', action='store_true', help='선택한 계정의 로컬 자료 영구 삭제 확인')
     parser.add_argument('--root', type=Path, default=default_root())
     parser.add_argument('--source', type=Path)
     parser.add_argument('--shortcut', action='store_true')
@@ -512,7 +590,31 @@ def main():
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
-        if args.action == 'codex-status':
+        if args.action == 'accounts' or (args.action == 'launch' and not args.wait_pid):
+            def prepare_selector(progress):
+                return launch(root, source=args.source, shortcut=args.shortcut,
+                              progress=progress, select_accounts=True)
+            if getattr(sys, 'frozen', False):
+                import ctypes
+                ctypes.windll.kernel32.FreeConsole()
+            if not args.no_ui:
+                import launcher_ui
+                code = launcher_ui.run(prepare_selector)
+                if code:
+                    return code
+                return open_accounts(root)
+            result = prepare_selector(lambda message, percent: print(message, flush=True))
+        elif args.action == 'account-create':
+            if not args.name: raise ValueError('--name으로 계정 창 이름을 지정하세요.')
+            result = account_profiles.create(root, args.name)
+        elif args.action == 'account-list':
+            result = {'accounts': account_profiles.list_accounts(root)}
+        elif args.action == 'account-launch':
+            result = launch_account(root, args.account_id, wait_ready=not args.no_ui)
+        elif args.action == 'account-delete':
+            if not args.confirm_delete: raise ValueError('영구 삭제하려면 --confirm-delete를 지정하세요.')
+            result = delete_account(root, args.account_id)
+        elif args.action == 'codex-status':
             result = codex_status(root)
         elif args.action == 'update-status':
             result = update_status(root)
@@ -594,7 +696,7 @@ def main():
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         message = 'Codex Labels: ' + str(error)
         print(message, flush=True)
-        if args.action == 'launch' and getattr(sys, 'frozen', False):
+        if args.action == 'launch' and getattr(sys, 'frozen', False) and not args.no_ui:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, message, 'Codex Labels', 0x10)
         return 1
