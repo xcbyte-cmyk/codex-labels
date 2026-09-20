@@ -292,7 +292,7 @@
         versions.textContent=`실행 중: ${result.currentVersion?'v'+result.currentVersion:'버전 확인 불가'}`;
         if(result.downloadedVersion)versions.textContent+=` · 다운로드된 버전: v${result.downloadedVersion}`;
         if(result.latestVersion)versions.textContent+=` · 최근 확인한 공개 버전: v${result.latestVersion}`;
-        message.textContent=result.pendingRestart
+        message.textContent=result.updateBlocked ? result.message : result.pendingRestart
           ?(typeof api.restartUpdate==='function'?'다운로드 완료 · 설치 대기 중입니다. 설치하고 다시 실행하거나 나중에 진행할 수 있습니다.':'적용 준비 완료. Labels를 완전히 종료한 뒤 다시 실행해 주세요.')
           :result.available?'새 버전을 다운로드할 수 있습니다. 다운로드 후 설치 시점을 선택하세요.'
           :result.latestVersion?'최근 확인 결과, 설치할 새 정식 버전이 없습니다.':'공개 업데이트는 아직 확인하지 않았습니다. 업데이트 확인을 눌러 새 버전을 확인하세요.';

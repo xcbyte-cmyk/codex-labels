@@ -1,5 +1,6 @@
 'use strict';
 // Loaded by early-bootstrap.js BEFORE the upstream single-instance lock.
+if (process.platform === 'darwin') process.env.CODEX_SPARKLE_ENABLED = 'false';
 const {app, ipcMain, shell, BrowserWindow, Notification} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,15 +12,15 @@ const {configDirectory: installedConfigDirectory} = require('./codex-labels-loca
 // Installer smoke uses a fresh config, profile and CODEX_HOME, never account data.
 const smokeDirectory = process.env.CODEX_LABELS_SMOKE_DIRECTORY;
 const configDirectory = smokeDirectory || installedConfigDirectory;
-const {createUpdater} = require('./codex-labels/updates.cjs');
+const {createUpdater} = require(process.platform === 'darwin' ? './codex-labels/updates-macos.cjs' : './codex-labels/updates.cjs');
 const updater = createUpdater(configDirectory, {quit: () => app.quit()});
 app.once('ready', () => { if (!smokeDirectory) updater.prime().catch(() => {}); });
 // Protocol/shortcut launches do not inherit launch.ps1's environment. Keep them
 // on the SAME Labels profile, without modifying CODEX_HOME or the original app.
 const defaultProfile = process.platform === 'win32' && process.env.LOCALAPPDATA
-  ? path.join(process.env.LOCALAPPDATA, 'CodexLabels', 'User Data') : app.getPath('userData');
+  ? path.join(process.env.LOCALAPPDATA, 'CodexLabels', 'User Data') : process.platform === 'darwin' ? path.join(app.getPath('appData'), 'CodexLabels', 'User Data') : app.getPath('userData');
 const profile = process.env.CODEX_ELECTRON_USER_DATA_PATH || defaultProfile;
-if (process.platform === 'win32') {
+if (process.platform === 'win32' || process.platform === 'darwin') {
   fs.mkdirSync(profile, {recursive: true});
   process.env.CODEX_ELECTRON_USER_DATA_PATH = profile;
   app.setPath('userData', profile);
@@ -154,7 +155,7 @@ app.on('web-contents-created', (_event, contents) => {
 app.once('will-quit', () => { notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
 recordStatus({notification: notifications.status()});
 // Exercise the shipped Electron/preload/renderer bridge without account onboarding.
-if (smokeDirectory) app.whenReady().then(() => {
+if (smokeDirectory) app.whenReady().then(() => new Promise(resolve => setTimeout(resolve, 1500))).then(() => {
   const file = path.join(smokeDirectory, 'smoke.html');
   fs.writeFileSync(file, '<!doctype html><html><body><aside><div data-app-action-sidebar-thread-row data-app-action-sidebar-thread-id="labels-smoke" data-app-action-sidebar-thread-host-id="local" data-app-action-sidebar-thread-title="Smoke"><span>Smoke</span></div></aside><main></main></body></html>');
   const window = new BrowserWindow({show: false, webPreferences: {

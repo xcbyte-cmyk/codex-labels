@@ -53,7 +53,7 @@ def digest(data, block=4194304):
             'blocks': [hashlib.sha256(data[i:i+block]).hexdigest() for i in range(0, len(data), block)]}
 
 
-def build_asar(source, target, config_directory, extra=None, *, refresh=False):
+def build_asar(source, target, config_directory, extra=None, *, refresh=False, supported_version=SUPPORTED_APP_VERSION, activity=True):
     source, target = Path(source), Path(target)
     if source.resolve() == target.resolve():
         raise ValueError('The source archive must never be the target')
@@ -77,7 +77,7 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                     raise ValueError('Truncated archive member: ' + name)
                 return data
 
-            if json.loads(read('package.json'))['version'] != SUPPORTED_APP_VERSION:
+            if json.loads(read('package.json'))['version'] != supported_version:
                 raise RuntimeError('Unsupported app version. Inspect the new version before patching.')
             early, preload = '.vite/build/early-bootstrap.js', '.vite/build/preload.js'
             early_source, preload_source = read(early), read(preload)
@@ -101,27 +101,28 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                 changed['.vite/build/codex-labels/' + name] = (ROOT/'extension'/name).read_bytes()
             # Exact-version hooks into the existing catalog observation path.
             # Fail closed on upstream changes; never infer active state from labels.
-            activity_bundle = 'webview/assets/app-initial-9aa16c63159e.js'
-            if activity_bundle not in original:
-                raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
-            activity_source = read(activity_bundle).decode('utf-8')
-            if refresh:
-                old_activity = read('.vite/build/codex-labels/activity-sync.cjs').decode('utf-8') + '\n'
-                if not activity_source.startswith(old_activity):
-                    raise RuntimeError('Unknown activity patch; keep the current runtime.')
-                activity_source = activity_source[len(old_activity):]
+            if activity:
+                activity_bundle = 'webview/assets/app-initial-9aa16c63159e.js'
+                if activity_bundle not in original:
+                    raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
+                activity_source = read(activity_bundle).decode('utf-8')
+                if refresh:
+                    old_activity = read('.vite/build/codex-labels/activity-sync.cjs').decode('utf-8') + '\n'
+                    if not activity_source.startswith(old_activity):
+                        raise RuntimeError('Unknown activity patch; keep the current runtime.')
+                    activity_source = activity_source[len(old_activity):]
+                    for variable in ('e', 'r'):
+                        inserted = f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)'
+                        if activity_source.count(inserted) != 1:
+                            raise RuntimeError('Unknown activity hook; keep the current runtime.')
+                        activity_source = activity_source.replace(inserted, '', 1)
                 for variable in ('e', 'r'):
-                    inserted = f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)'
-                    if activity_source.count(inserted) != 1:
-                        raise RuntimeError('Unknown activity hook; keep the current runtime.')
-                    activity_source = activity_source.replace(inserted, '', 1)
-            for variable in ('e', 'r'):
-                anchor = f'C_(o,n).observeCatalogThreads({variable})'
-                if activity_source.count(anchor) != 1:
-                    raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
-                activity_source = activity_source.replace(anchor, anchor +
-                    f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)')
-            changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
+                    anchor = f'C_(o,n).observeCatalogThreads({variable})'
+                    if activity_source.count(anchor) != 1:
+                        raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
+                    activity_source = activity_source.replace(anchor, anchor +
+                        f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)')
+                changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
             if extra:
                 changed.update(extra)
             for name, data in changed.items():

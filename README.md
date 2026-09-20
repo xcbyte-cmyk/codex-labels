@@ -4,6 +4,10 @@ Windows용 Codex의 프로젝트·작업 제목 앞에 상태 라벨을 표시�
 
 An unofficial, version-gated Windows customization. This repository contains extension source and tests, not Codex binaries or user data.
 
+## macOS 미리보기
+
+Apple Silicon macOS용 실험적 설치 도구를 제공합니다. 지원 앱 버전, 설치 방법과 제한은 [macOS 안내](docs/macos.md)를 확인하세요. 공식 앱 바이너리와 개인 데이터는 배포하지 않습니다.
+
 ## 상태 라벨
 
 Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 배지를 다시 누르면 상태를 변경하거나 해제할 수 있습니다. 같은 메뉴의 **라벨 설정…**에서 이름, 배경색, 글자색, 설명, 순서, 사용 여부, 글자 크기, 모서리와 여백을 수정합니다. 저장 전 미리보기와 취소, 외부 편집 충돌 차단, 직전 설정 백업을 제공합니다.
