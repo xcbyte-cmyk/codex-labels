@@ -25,6 +25,8 @@ class PackageTests(unittest.TestCase):
                 info = json.loads(archive.read('build-info.json'))
                 self.assertFalse(info['containsCodexBinaries'])
                 self.assertEqual(info['sourceCommit'], 'a'*40)
+                self.assertEqual(info['packageSchemaVersion'], 1)
+                self.assertEqual(set(info['updateFiles']), {'CodexLabelsHelper.exe', 'build-info.json'})
 
     @unittest.skipUnless(os.environ.get('CODEX_LABELS_PACKAGE_ZIP'), 'Frozen artifact smoke is opt-in')
     def test_frozen_helper_prepares_checks_updates_and_creates_scoped_shortcut(self):

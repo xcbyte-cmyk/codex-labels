@@ -19,8 +19,10 @@ import zipfile
 REPO = 'xcbyte-cmyk/codex-labels'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
 MAX_DOWNLOAD = 40 * 1024 * 1024
-FILES = {'CodexLabelsHelper.exe', 'build-info.json', '설치.cmd', '실행.cmd',
-         '계정별 실행.cmd', '사용안내.txt', 'PYTHON-LICENSE.txt', 'PYINSTALLER-LICENSE.txt', 'PSUTIL-LICENSE.txt'}
+UPDATE_FILES = {'CodexLabelsHelper.exe', 'build-info.json'}
+PERSONAL_FILES = {'labels.json', 'assignments.json'}
+PACKAGE_SCHEMA_VERSION = 1
+MANUAL_UPGRADE = '이 버전은 자동 업데이트할 수 없습니다. 새 설치 ZIP으로 업그레이드해 주세요.'
 
 
 def version(value):
@@ -100,13 +102,26 @@ def unpack(data, expected_version, supported_version):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         members = archive.infolist()
         names = [item.filename for item in members]
-        if (len(names) != len(set(names)) or set(names) - FILES
-                or not {'CodexLabelsHelper.exe', 'build-info.json'} <= set(names)
+        folded_names = [name.casefold() for name in names]
+        unsafe_name = any(not name or name in {'.', '..'} or '/' in name or '\\' in name or ':' in name or '\x00' in name
+                          for name in names)
+        if (len(folded_names) != len(set(folded_names)) or unsafe_name
+                or not UPDATE_FILES <= set(names)
+                or PERSONAL_FILES & set(folded_names)
                 or sum(item.file_size for item in members) > 80 * 1024 * 1024
                 or any(item.is_dir() or item.flag_bits & 1 or ((item.external_attr >> 16) & 0o170000) == 0o120000 for item in members)):
             raise ValueError('업데이트 ZIP의 파일 구성이 올바르지 않습니다.')
-        info = json.loads(archive.read('build-info.json'))
-        if (not isinstance(info, dict) or info.get('version') != expected_version
+        metadata = archive.read('build-info.json')
+        info = json.loads(metadata)
+        if not isinstance(info, dict):
+            raise ValueError('현재 Codex와 호환되지 않는 업데이트입니다. 기존 버전을 유지합니다.')
+        schema = info.get('packageSchemaVersion', PACKAGE_SCHEMA_VERSION)
+        update_files = info.get('updateFiles', sorted(UPDATE_FILES))
+        if (schema != PACKAGE_SCHEMA_VERSION or not isinstance(update_files, list)
+                or not all(isinstance(name, str) for name in update_files)
+                or len(update_files) != len(set(update_files)) or set(update_files) != UPDATE_FILES):
+            raise ValueError(MANUAL_UPGRADE)
+        if (info.get('version') != expected_version
                 or not isinstance(info.get('supportedAppVersion'), str) or info['supportedAppVersion'] not in installed_versions
                 or info.get('containsCodexBinaries') is not False
                 or not isinstance(info.get('sourceCommit'), str) or not re.fullmatch(r'[0-9a-f]{40}', info['sourceCommit'])):
@@ -114,7 +129,7 @@ def unpack(data, expected_version, supported_version):
         helper = archive.read('CodexLabelsHelper.exe')
         if not helper.startswith(b'MZ'):
             raise ValueError('올바른 Windows 실행 파일이 아닙니다.')
-        return {'CodexLabelsHelper.exe': helper, 'build-info.json': archive.read('build-info.json')}
+        return {'CodexLabelsHelper.exe': helper, 'build-info.json': metadata}
 
 
 def stage(root, current, supported_version, read=fetch):
