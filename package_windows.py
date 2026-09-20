@@ -26,7 +26,9 @@ def write_zip(executable, destination, source_commit, license_files):
         for source, name in files:
             archive.write(source, name)
         archive.writestr('build-info.json', json.dumps({'version': VERSION, 'sourceCommit': source_commit,
-            'supportedAppVersion': builder.SUPPORTED_APP_VERSION, 'containsCodexBinaries': False}, indent=2))
+            'supportedAppVersion': builder.SUPPORTED_APP_VERSION, 'containsCodexBinaries': False,
+            'packageSchemaVersion': 1,
+            'updateFiles': ['CodexLabelsHelper.exe', 'build-info.json']}, indent=2))
 
 
 def main():
