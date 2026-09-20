@@ -26,6 +26,9 @@ if (process.platform === 'win32') {
 }
 const store = createStore(configDirectory);
 const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
+const {registerVocabulary} = require('./codex-labels/vocabulary-ipc.cjs');
+const vocabulary = registerVocabulary({ipcMain,check,directory:configDirectory,
+  executable:path.join(process.resourcesPath,'codex.exe'),home:process.env.CODEX_HOME || path.join(app.getPath('home'),'.codex')});
 const statusPath = path.join(configDirectory, 'runtime-status.json');
 let status = {version: 3, status: 'starting', settingsAvailable: true,
   launchToken: process.env.CODEX_LABELS_LAUNCH_TOKEN || null,
@@ -129,6 +132,7 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 });
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
+  fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8');
 const titledWindows = new WeakSet();
 app.on('web-contents-created', (_event, contents) => {
@@ -151,7 +155,7 @@ app.on('web-contents-created', (_event, contents) => {
     contents.executeJavaScript(source).catch(() => recordStatus({status: 'renderer-initialization-failed'}));
   });
 });
-app.once('will-quit', () => { notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
+app.once('will-quit', () => { vocabulary.dispose(); notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
 recordStatus({notification: notifications.status()});
 // Exercise the shipped Electron/preload/renderer bridge without account onboarding.
 if (smokeDirectory) app.whenReady().then(() => {
