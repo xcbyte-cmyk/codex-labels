@@ -17,7 +17,7 @@ import runtime_recovery as recovery
 import prepare_runtime as builder
 import account_profiles
 
-VERSION = '0.3.0'
+VERSION = '0.3.2'
 ASSETS = Path(__file__).resolve().parent
 HELPER_NAME = 'CodexLabelsHelper.exe'
 
