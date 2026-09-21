@@ -168,6 +168,18 @@ class LabelRendererTests(unittest.TestCase):
         self.settle()
         self.assertAlmostEqual(badge.bounding_box()['x'],before['x'],delta=0.5)
         self.assertFalse(badge.evaluate("e=>!!e.closest('[data-marquee-text]')"))
+
+    def test_column_title_host_is_normalized_to_one_horizontal_line(self):
+        self.start("""
+            const row=addRow('first');
+            const title=row.querySelector('.task-title');
+            title.style.display='flex';title.style.flexDirection='column';title.style.width='180px';
+        """)
+        host=self.page.locator('#first .task-title')
+        badge=self.badge()
+        self.assertEqual(host.evaluate('e=>getComputedStyle(e).flexDirection'),'row')
+        self.assertLess(abs(badge.bounding_box()['y']-host.bounding_box()['y']),3)
+        self.assertTrue(host.evaluate("e=>e.classList.contains('cdx-label-host')"))
         self.choose('진행')
         self.assertEqual(badge.inner_text(),'진행')
 
