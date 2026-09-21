@@ -14,6 +14,7 @@
   const style=document.createElement('style');style.id='codex-label-styles';
   style.textContent=`
     .cdx-label{display:inline-flex!important;align-items:center;justify-content:center;flex-shrink:0;white-space:nowrap;line-height:1.4;vertical-align:middle;font-family:inherit;font-weight:600;cursor:pointer;user-select:none;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+    .cdx-label-host{display:flex!important;flex-direction:row!important;align-items:center!important;min-width:0}
     .cdx-label[data-unset]{opacity:0.28;background:transparent!important;color:inherit!important;border:1px dashed currentColor;padding:0 4px!important}
     [data-app-action-sidebar-thread-row]:hover .cdx-label,[data-app-action-sidebar-project-row]:hover .cdx-label,.cdx-label:focus-visible{opacity:1}
     .cdx-label:focus-visible{outline:2px solid #7dd3fc;outline-offset:2px}
@@ -80,7 +81,7 @@
   }
   function registerRow(row){
     if(rows.has(row)||!row.isConnected)return;
-    const state={badge:null,view:null,observer:new MutationObserver(mutations=>{
+    const state={badge:null,host:null,view:null,observer:new MutationObserver(mutations=>{
       if(mutations.some(m=>!(m.target instanceof Element?m.target:m.target.parentElement)?.closest(ownSelector))){
         dirtyRows.add(row);schedule();
       }
@@ -90,7 +91,7 @@
   function unregisterRow(row){
     if(row.isConnected&&row.matches(rowSelector))return;
     const state=rows.get(row);if(!state)return;
-    state.observer.disconnect();state.badge?.remove();rows.delete(row);dirtyRows.delete(row);schedule();
+    state.observer.disconnect();state.badge?.remove();state.host?.classList.remove('cdx-label-host');rows.delete(row);dirtyRows.delete(row);schedule();
   }
   function visitRows(node,visit){
     if(!(node instanceof Element)||node.closest(ownSelector))return;
@@ -99,7 +100,7 @@
   }
   function paintRow(row,state){
     const key=identity(row),node=key&&titleNode(row);
-    if(!node){state.badge?.remove();state.badge=null;state.view=null;return;}
+    if(!node){state.badge?.remove();state.host?.classList.remove('cdx-label-host');state.badge=null;state.host=null;state.view=null;return;}
     let badge=state.badge;
     if(!badge||!row.contains(badge)){
       badge=document.createElement('span');badge.className='cdx-label';badge.role='button';badge.tabIndex=0;
@@ -109,7 +110,9 @@
     // its viewport, so hovering a long title never moves the menu trigger.
     const marquee=node.parentElement.closest('[data-marquee-text]');
     const anchor=marquee&&row.contains(marquee)?marquee:node;
-    if(badge.nextSibling!==anchor)anchor.parentNode.insertBefore(badge,anchor);
+    const host=anchor.parentNode;
+    if(state.host!==host){state.host?.classList.remove('cdx-label-host');state.host=host;host.classList.add('cdx-label-host');}
+    if(badge.nextSibling!==anchor)host.insertBefore(badge,anchor);
     const label=labels.get(snapshot.assignments[key]),a=snapshot.config.appearance;
     const view=JSON.stringify([key,label?.name,label?.description,label?.backgroundColor,label?.textColor,
       a.fontSizePx,a.borderRadiusPx,a.verticalPaddingPx,a.horizontalPaddingPx,a.gapPx]);
