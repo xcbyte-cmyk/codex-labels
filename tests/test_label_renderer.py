@@ -140,6 +140,11 @@ class LabelRendererTests(unittest.TestCase):
         self.page.get_by_role('menuitem', name=name, exact=True).click()
         self.settle()
 
+    def test_empty_sidebar_reports_ready_with_zero_counts(self):
+        self.page.add_script_tag(content=self.source)
+        self.page.wait_for_function('fixture.reports.length > 0')
+        self.assertEqual(self.page.evaluate('fixture.reports.at(-1)'), {'rows': 0, 'badges': 0})
+
     def test_assign_unset_and_project_use_stable_keys(self):
         self.start("addRow('first'); addRow('project', {project: 'C:/workspace/demo'});")
         self.choose('진행')

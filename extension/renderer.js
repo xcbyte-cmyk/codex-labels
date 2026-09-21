@@ -143,7 +143,9 @@
       const key=identity(row);
       if(configChanged||previous.assignments[key]!==next.assignments[key])dirtyRows.add(row);
     }
-    if(dirtyRows.size)schedule();
+    // Report readiness even when the current screen has no sidebar rows (for
+    // example Usage/settings). The launcher must not mistake 0/0 for a hang.
+    if(dirtyRows.size||lastReport==='')schedule();
     settingsChangedExternally();
     if(menu&&opener?.isConnected)showMenu(opener);
   }
