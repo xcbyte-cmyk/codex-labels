@@ -116,6 +116,10 @@ const notifications = accountProfile ? disabledNotifications() : createNotificat
 const {createTray} = require('./codex-labels/tray.cjs');
 const tray = createTray({app, BrowserWindow, Tray, Menu, iconPath: process.execPath,
   title: windowTitle, enabled: !smokeDirectory});
+const {createAccountSwitcher} = require('./codex-labels/account-switcher.cjs');
+const accountSwitcher = createAccountSwitcher({root: installedConfigDirectory, currentAccount: accountProfile,
+  BrowserWindow, helperPath: path.join(installedConfigDirectory, 'CodexLabelsHelper.exe'),
+  localAppData: process.env.LOCALAPPDATA});
 ipcMain.handle('codex-labels:read', (event, knownVersion) => { check(event); return cache.snapshot(knownVersion); });
 ipcMain.handle('codex-labels:assign', (event, key, id) => {
   check(event); return cache.update(store.assign(key, id));
@@ -148,6 +152,8 @@ ipcMain.handle('codex-labels:open-account-selector', async event => {
   });
   return true;
 });
+ipcMain.handle('codex-labels:account-switcher-list', event => { check(event); return accountSwitcher.list(); });
+ipcMain.handle('codex-labels:account-switcher-switch', (event, id) => { check(event); return accountSwitcher.switchTo(event, id); });
 ipcMain.handle('codex-labels:update-check', event => { check(event); return updater.check(); });
 function checkUpdateWindow() {
   if (accountProfile) throw Error('계정별 창을 모두 닫고 기본 Labels에서 업데이트하세요.');

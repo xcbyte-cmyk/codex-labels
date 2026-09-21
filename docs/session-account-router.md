@@ -1,6 +1,12 @@
 # Issue #21 — Session-preserving account switch core
 
-Status: **development core; not wired to the Desktop UI/app-server yet.**
+Status: **transaction core plus a window-level Account Switcher UI; native in-place app-server switching is not wired yet.**
+
+## Installed window switcher
+
+The Labels badge menu and settings expose **Account Switcher**. It lists the default profile and registered isolated account windows. Selecting another account starts that verified account window through `CodexLabelsHelper.exe`, waits for the helper to confirm launch, then hides the source window. The source session remains alive and can be restored from the tray.
+
+This window-level switcher does not copy a conversation or change the backend account of the current window. It provides a usable account transition while preserving strict profile isolation. The UI states this boundary before the user switches.
 
 This change introduces the transaction layer needed for a session-preserving account switch without claiming that the current Codex Desktop backend can already be hot-swapped.
 
@@ -45,7 +51,6 @@ The adapter must own an isolated account backend. It must not reuse a backend th
 
 This PR does **not** yet:
 
-- add an Account Switcher button,
 - register/manage real login credentials,
 - patch the installed Desktop app-server transport,
 - prove that a native remote thread can be reused across accounts,
@@ -92,6 +97,6 @@ Those 61 cases use backend doubles; they are not proof of a working real-account
 1. Identify the supported app-server/backend lifecycle boundary in the bundled Windows Codex runtime.
 2. Implement a real isolated backend adapter with trusted identity verification.
 3. Gate all session dispatch through the router.
-4. Add trusted IPC and Account Switcher UI.
+4. Replace the window-level switch with trusted in-place IPC only after the adapter proves the required identity and restore contracts.
 5. Verify with two real accounts that the next request is billed to the selected account while the visible working session remains intact.
 6. Only then add the new modules to runtime packaging and close issue #21.

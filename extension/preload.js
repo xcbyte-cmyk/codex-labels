@@ -27,6 +27,8 @@
     report: counts => ipcRenderer.invoke('codex-labels:report', counts),
     openConfig: () => ipcRenderer.invoke('codex-labels:open-config'),
     openAccountSelector: () => ipcRenderer.invoke('codex-labels:open-account-selector'),
+    accountSwitcherList: () => ipcRenderer.invoke('codex-labels:account-switcher-list'),
+    accountSwitcherSwitch: id => ipcRenderer.invoke('codex-labels:account-switcher-switch', id),
     updateStatus: () => ipcRenderer.invoke('codex-labels:update-status'),
     checkUpdate: () => ipcRenderer.invoke('codex-labels:update-check'),
     stageUpdate: () => ipcRenderer.invoke('codex-labels:update-stage'),

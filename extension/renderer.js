@@ -6,9 +6,9 @@
   const threadSel='[data-app-action-sidebar-thread-row]';
   const projectSel='[data-app-action-sidebar-project-row]';
   const rowSelector=threadSel+','+projectSel;
-  const ownSelector='#cdx-label-menu,#cdx-label-error,#cdx-label-settings,.cdx-label';
+  const ownSelector='#cdx-label-menu,#cdx-label-error,#cdx-label-settings,#cdx-account-switcher,.cdx-label';
   const rows=new Map(),dirtyRows=new Set();
-  let labels=new Map(),snapshot,menu=null,menuKey=null,opener=null,settings=null,openingSettings=false;
+  let labels=new Map(),snapshot,menu=null,menuKey=null,opener=null,settings=null,openingSettings=false,accountDialog=null;
   let frame=0,reading=false,writing=false,readPending=false,readEpoch=0,disposed=false,lastReport='';
   let readQueue=Promise.resolve();
   const style=document.createElement('style');style.id='codex-label-styles';
@@ -24,6 +24,14 @@
     #cdx-label-menu button:disabled{opacity:.5;cursor:wait}#cdx-label-menu .swatch{width:12px;height:12px;border-radius:3px;flex-shrink:0}
     #cdx-label-menu .notice{margin:6px 8px;color:#ffbd86;font-size:12px}#cdx-label-menu .caption{padding:4px 8px;color:#b6bdc7;font-size:11px}
     #cdx-label-error{position:fixed;bottom:18px;right:18px;z-index:2147483647;max-width:420px;padding:12px;border:1px solid #fb923c;border-radius:8px;background:#202123;color:#fff;font:13px/1.5 sans-serif}
+    #cdx-account-switcher{position:fixed;inset:0;margin:auto;padding:0;width:min(520px,calc(100vw - 32px));max-width:none;border:1px solid #4b4e54;border-radius:14px;background:#202123;color:#f5f6f7;box-shadow:0 20px 80px #0008;font:13px/1.5 'Segoe UI','Malgun Gothic',sans-serif;color-scheme:dark}
+    #cdx-account-switcher::backdrop{background:#0008}#cdx-account-switcher *{box-sizing:border-box}
+    #cdx-account-switcher .as-head{padding:22px 24px 15px;border-bottom:1px solid #3c3f44}#cdx-account-switcher h2{margin:0;font-size:20px}#cdx-account-switcher p{margin:7px 0 0;color:#b7bec8}
+    #cdx-account-switcher .as-list{display:grid;gap:8px;padding:18px 24px;max-height:48vh;overflow:auto}
+    #cdx-account-switcher .as-account{display:flex;align-items:center;gap:10px;width:100%;padding:11px 13px;border:1px solid #555963;border-radius:8px;background:#2b2e33;color:inherit;text-align:left;font:inherit;cursor:pointer}
+    #cdx-account-switcher .as-account:hover,#cdx-account-switcher .as-account:focus-visible{background:#383c42;outline:2px solid #7dd3fc}.as-account[disabled]{opacity:.65;cursor:default}.as-current{margin-left:auto;color:#7dd3fc;font-size:12px}
+    #cdx-account-switcher .as-status{min-height:20px;padding:0 24px 12px;color:#ffd4a5}#cdx-account-switcher .as-actions{display:flex;gap:8px;justify-content:flex-end;padding:15px 24px;border-top:1px solid #3c3f44}
+    #cdx-account-switcher .as-actions button{border:1px solid #555963;border-radius:7px;background:#303237;color:inherit;padding:8px 12px;font:inherit;cursor:pointer}
     #cdx-label-settings{position:fixed;inset:0;margin:auto;padding:0;width:min(720px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 32px);border:1px solid #4b4e54;border-radius:14px;background:#202123;color:#f5f6f7;box-shadow:0 20px 80px #0008;font:13px/1.5 'Segoe UI','Malgun Gothic',sans-serif;color-scheme:dark;overflow:auto}
     #cdx-label-settings::backdrop{background:#0008}
     #cdx-label-settings *,#cdx-label-settings *::before,#cdx-label-settings *::after{box-sizing:border-box}
@@ -188,14 +196,34 @@
     };
     for(const l of [...snapshot.config.labels].filter(l=>l.enabled).sort((a,b)=>a.order-b.order))add(l.name,l.backgroundColor,choose(l.id));
     add('라벨 해제',null,choose(null));add('라벨 설정…',null,()=>showSettings().catch(error));
-    if(api.openAccountSelector)add('계정 선택기…',null,()=>{
-      closeMenu();api.openAccountSelector().catch(error);
-    });
+    if(api.accountSwitcherList)add('Account Switcher…',null,()=>{closeMenu();showAccountSwitcher().catch(error);});
     if(api.vocabularyRead)add('단어장…',null,()=>{closeMenu();window.dispatchEvent(new Event('codex-labels:open-vocabulary'));});
     if(snapshot.configError){const p=document.createElement('p');p.className='notice';p.textContent='설정 오류로 마지막 정상 설정을 표시합니다: '+snapshot.configError;menu.append(p);}
     document.body.append(menu);const r=badge.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(r.left,innerWidth-menu.offsetWidth-8))+'px';menu.style.top=Math.max(8,Math.min(r.bottom+6,innerHeight-menu.offsetHeight-8))+'px';menu.querySelector('button')?.focus({preventScroll:true});
   }
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
+  async function showAccountSwitcher(){
+    if(accountDialog){accountDialog.focus();return;}
+    const state=await api.accountSwitcherList();
+    const dialog=element('dialog');dialog.id='cdx-account-switcher';accountDialog=dialog;
+    const head=element('div','as-head'),title=element('h2',null,'Account Switcher');title.id='cdx-account-switcher-title';
+    const help=element('p',null,'대상 계정 창을 열고 현재 창을 숨깁니다. 현재 작업은 이 창에 그대로 보존되며 다른 계정으로 복사되지 않습니다.');
+    head.append(title,help);dialog.setAttribute('aria-labelledby',title.id);
+    const list=element('div','as-list'),status=element('div','as-status');status.setAttribute('role','status');
+    let busy=false;
+    for(const account of state.accounts){
+      const row=button(account.name,'as-account',async()=>{
+        if(busy||account.current)return;busy=true;list.querySelectorAll('button').forEach(item=>item.disabled=true);status.textContent=`${account.name} 창을 열고 있습니다…`;
+        try{const result=await api.accountSwitcherSwitch(account.id);if(!result.changed){status.textContent='이미 이 계정 창을 사용하고 있습니다.';busy=false;list.querySelectorAll('button').forEach(item=>item.disabled=false);}}
+        catch(e){status.textContent=e?.message||String(e);busy=false;list.querySelectorAll('button').forEach(item=>item.disabled=false);}
+      });
+      if(account.current){row.disabled=true;row.append(element('span','as-current','현재 창'));}list.append(row);
+    }
+    const actions=element('div','as-actions');
+    const manage=button('계정 추가·관리',null,()=>api.openAccountSelector().catch(e=>status.textContent=e?.message||String(e)));
+    const close=button('닫기',null,()=>dialog.close());actions.append(manage,close);
+    dialog.append(head,list,status,actions);document.body.append(dialog);dialog.addEventListener('close',()=>{dialog.remove();if(accountDialog===dialog)accountDialog=null;});dialog.showModal();
+  }
   function button(text,className,action){const node=element('button',className,text);node.type='button';if(action)node.addEventListener('click',action);return node;}
   function closeSettings(){
     if(!settings||settings.saving||settings.restarting)return;
@@ -261,10 +289,10 @@
     enabled.addEventListener('change',()=>{current().enabled=enabled.checked;updatePreview();});
     const preview=element('div','cdx-settings-preview'),previewCaption=element('div','cdx-settings-help','미리보기'),previewRow=element('div','cdx-settings-preview-row'),previewBadge=element('span','cdx-settings-preview-badge'),previewHelp=element('p','cdx-settings-help');previewRow.append(previewBadge,document.createTextNode('프로젝트명'));preview.append(previewCaption,previewRow,previewHelp);editor.append(preview);
     const appearance=element('details'),appearanceTitle=element('summary',null,'배지 모양 · 모든 라벨에 적용'),appearanceFields=element('div','cdx-settings-fields cdx-settings-appearance');appearance.append(appearanceTitle,appearanceFields);editor.append(appearance);
-    if(typeof api.openAccountSelector==='function'){
-      const accounts=element('section','cdx-settings-updates'),heading=element('strong',null,'계정 선택기');
-      const help=element('p','cdx-settings-help','계정별 작업 창을 선택하거나 추가합니다. 선택한 계정은 별도 창으로 열리며, 현재 창의 로그인 계정과 작업은 바뀌지 않습니다.');
-      const open=button('계정 선택기 열기',null,()=>api.openAccountSelector().catch(error=>state.message(error?.message||String(error))));
+    if(typeof api.accountSwitcherList==='function'){
+      const accounts=element('section','cdx-settings-updates'),heading=element('strong',null,'Account Switcher');
+      const help=element('p','cdx-settings-help','계정 창을 전환합니다. 현재 작업은 원래 창에 보존되고 대상 계정으로 복사되지 않습니다.');
+      const open=button('Account Switcher 열기',null,()=>showAccountSwitcher().catch(error=>state.message(error?.message||String(error))));
       accounts.append(heading,help,open);editor.append(accounts);
     }
     if(typeof api.checkUpdate==='function'&&typeof api.stageUpdate==='function'){

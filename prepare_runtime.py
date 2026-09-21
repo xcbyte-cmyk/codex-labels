@@ -17,7 +17,7 @@ SUPPORTED_APP_VERSION = '26.915.31945'
 ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
 ACTIVITY_CONTROLLER = 'ep(o,n)'
 ACTIVITY_COORDINATION = 'yU.clientCoordination'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'tray.cjs')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'tray.cjs', 'account-switcher.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
