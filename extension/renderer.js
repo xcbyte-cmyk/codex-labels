@@ -188,6 +188,9 @@
     };
     for(const l of [...snapshot.config.labels].filter(l=>l.enabled).sort((a,b)=>a.order-b.order))add(l.name,l.backgroundColor,choose(l.id));
     add('라벨 해제',null,choose(null));add('라벨 설정…',null,()=>showSettings().catch(error));
+    if(api.openAccountSelector)add('Account Switcher · 계정 선택기…',null,()=>{
+      closeMenu();api.openAccountSelector().catch(error);
+    });
     if(api.vocabularyRead)add('단어장…',null,()=>{closeMenu();window.dispatchEvent(new Event('codex-labels:open-vocabulary'));});
     if(snapshot.configError){const p=document.createElement('p');p.className='notice';p.textContent='설정 오류로 마지막 정상 설정을 표시합니다: '+snapshot.configError;menu.append(p);}
     document.body.append(menu);const r=badge.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(r.left,innerWidth-menu.offsetWidth-8))+'px';menu.style.top=Math.max(8,Math.min(r.bottom+6,innerHeight-menu.offsetHeight-8))+'px';menu.querySelector('button')?.focus({preventScroll:true});
@@ -258,6 +261,12 @@
     enabled.addEventListener('change',()=>{current().enabled=enabled.checked;updatePreview();});
     const preview=element('div','cdx-settings-preview'),previewCaption=element('div','cdx-settings-help','미리보기'),previewRow=element('div','cdx-settings-preview-row'),previewBadge=element('span','cdx-settings-preview-badge'),previewHelp=element('p','cdx-settings-help');previewRow.append(previewBadge,document.createTextNode('프로젝트명'));preview.append(previewCaption,previewRow,previewHelp);editor.append(preview);
     const appearance=element('details'),appearanceTitle=element('summary',null,'배지 모양 · 모든 라벨에 적용'),appearanceFields=element('div','cdx-settings-fields cdx-settings-appearance');appearance.append(appearanceTitle,appearanceFields);editor.append(appearance);
+    if(typeof api.openAccountSelector==='function'){
+      const accounts=element('section','cdx-settings-updates'),heading=element('strong',null,'Account Switcher · 계정 선택기');
+      const help=element('p','cdx-settings-help','계정별 작업 창을 선택하거나 추가합니다. 현재 창의 로그인 계정과 작업은 바뀌지 않습니다.');
+      const open=button('계정 선택기 열기',null,()=>api.openAccountSelector().catch(error=>state.message(error?.message||String(error))));
+      accounts.append(heading,help,open);editor.append(accounts);
+    }
     if(typeof api.checkUpdate==='function'&&typeof api.stageUpdate==='function'){
       const updates=element('section','cdx-settings-updates'),summary=element('strong',null,'Codex Labels 업데이트');
       summary.id='cdx-settings-updates-title';updates.setAttribute('aria-labelledby',summary.id);

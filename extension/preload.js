@@ -26,6 +26,7 @@
     saveConfig: (config, revision) => ipcRenderer.invoke('codex-labels:save-config', config, revision),
     report: counts => ipcRenderer.invoke('codex-labels:report', counts),
     openConfig: () => ipcRenderer.invoke('codex-labels:open-config'),
+    openAccountSelector: () => ipcRenderer.invoke('codex-labels:open-account-selector'),
     updateStatus: () => ipcRenderer.invoke('codex-labels:update-status'),
     checkUpdate: () => ipcRenderer.invoke('codex-labels:update-check'),
     stageUpdate: () => ipcRenderer.invoke('codex-labels:update-stage'),

@@ -3,6 +3,7 @@
 const {app, ipcMain, shell, BrowserWindow, Notification, Tray, Menu} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const {spawn} = require('node:child_process');
 const {fileURLToPath} = require('node:url');
 const {createStore} = require('./codex-labels-store.cjs');
 const {createSnapshotCache} = require('./codex-labels/snapshot-cache.cjs');
@@ -131,6 +132,19 @@ ipcMain.handle('codex-labels:report', (event, counts) => {
 });
 ipcMain.handle('codex-labels:open-config', async event => {
   check(event); const result = await shell.openPath(store.configPath); if (result) throw Error(result); return true;
+});
+ipcMain.handle('codex-labels:open-account-selector', async event => {
+  check(event);
+  if (smokeDirectory) throw Error('격리 검사에서는 계정 선택기를 열 수 없습니다.');
+  const helper = path.join(installedConfigDirectory, 'CodexLabelsHelper.exe');
+  if (!fs.existsSync(helper)) throw Error('계정 선택 실행 도구를 찾지 못했습니다. Labels를 다시 설치해 주세요.');
+  await new Promise((resolve, reject) => {
+    const child = spawn(helper, ['accounts', '--root', installedConfigDirectory],
+      {cwd: installedConfigDirectory, detached: true, windowsHide: true, stdio: 'ignore'});
+    child.once('error', reject);
+    child.once('spawn', () => {child.unref(); resolve();});
+  });
+  return true;
 });
 ipcMain.handle('codex-labels:update-check', event => { check(event); return updater.check(); });
 function checkUpdateWindow() {

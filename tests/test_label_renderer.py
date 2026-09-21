@@ -37,7 +37,7 @@ class LabelRendererTests(unittest.TestCase):
             window.fixture = {
                 data: {config, assignments: {}, configRevision: 'c1', snapshotVersion: 's1', configError: null},
                 sequence: 1, listeners: new Set(), reads: [], assignments: [], saves: [], reports: [],
-                activeReads: 0, maxActiveReads: 0, unsubscribed: 0,
+                activeReads: 0, maxActiveReads: 0, unsubscribed: 0, accountSelectorOpens: 0,
                 scans: {}, badgeWrites: new Set(), nextReadHeld: false, nextAssignHeld: false,
                 emit() { for (const listener of this.listeners) listener(); },
                 advance(configChanged = false) {
@@ -89,6 +89,7 @@ class LabelRendererTests(unittest.TestCase):
                     return copy(fixture.data);
                 },
                 async openConfig() {},
+                async openAccountSelector() { fixture.accountSelectorOpens++; },
                 async report(value) { fixture.reports.push(value); }
             };
             window.addRow = (id, options = {}) => {
@@ -144,6 +145,17 @@ class LabelRendererTests(unittest.TestCase):
         self.page.add_script_tag(content=self.source)
         self.page.wait_for_function('fixture.reports.length > 0')
         self.assertEqual(self.page.evaluate('fixture.reports.at(-1)'), {'rows': 0, 'badges': 0})
+
+    def test_account_selector_entry_opens_existing_picker(self):
+        self.start("addRow('first');")
+        self.choose('Account Switcher · 계정 선택기…')
+        self.assertEqual(self.page.evaluate('fixture.accountSelectorOpens'), 1)
+        self.badge().click()
+        self.page.get_by_role('menuitem', name='라벨 설정…').click()
+        self.page.get_by_role('button', name='계정 선택기 열기').click()
+        self.assertEqual(self.page.evaluate('fixture.accountSelectorOpens'), 2)
+        self.assertIn('현재 창의 로그인 계정과 작업은 바뀌지 않습니다.',
+                      self.page.locator('#cdx-label-settings').inner_text())
 
     def test_assign_unset_and_project_use_stable_keys(self):
         self.start("addRow('first'); addRow('project', {project: 'C:/workspace/demo'});")
