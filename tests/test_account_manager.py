@@ -12,6 +12,34 @@ import account_cleanup as cleanup
 
 @unittest.skipUnless(os.environ.get('CODEX_LABELS_ACCOUNT_UI_TESTS') == '1', 'Native account picker UI is opt-in')
 class AccountManagerTests(unittest.TestCase):
+    def test_existing_default_profile_is_preselected_without_new_credentials(self):
+        import account_manager as manager
+        import tkinter as tk
+        from tkinter import ttk
+        with tempfile.TemporaryDirectory() as temporary:
+            root_path = Path(temporary)
+            original_tk = tk.Tk
+            observed = {}
+            def create_window():
+                window = original_tk(); window.withdraw()
+                def inspect():
+                    try:
+                        frame = window.winfo_children()[0]
+                        tree = next(child for child in frame.winfo_children() if isinstance(child, ttk.Treeview))
+                        observed['rows'] = tree.get_children()
+                        observed['selection'] = tree.selection()
+                        observed['name'] = tree.item('default', 'values')[0]
+                        observed['accounts'] = profiles.list_accounts(root_path)
+                    finally: window.destroy()
+                window.after(50, inspect)
+                return window
+            with patch.object(manager.tk, 'Tk', side_effect=create_window):
+                manager.run(root_path, Mock(), Mock(), launch_default=Mock())
+            self.assertEqual(observed['rows'], ('default',))
+            self.assertEqual(observed['selection'], ('default',))
+            self.assertIn('현재 계정', observed['name'])
+            self.assertEqual(observed['accounts'], [])
+
     def exercise(self, confirm, fail=False):
         import account_manager as manager
         import tkinter as tk

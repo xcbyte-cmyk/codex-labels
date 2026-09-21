@@ -139,7 +139,9 @@ ipcMain.handle('codex-labels:open-account-selector', async event => {
   const helper = path.join(installedConfigDirectory, 'CodexLabelsHelper.exe');
   if (!fs.existsSync(helper)) throw Error('계정 선택 실행 도구를 찾지 못했습니다. Labels를 다시 설치해 주세요.');
   await new Promise((resolve, reject) => {
-    const child = spawn(helper, ['accounts', '--root', installedConfigDirectory],
+    const args = ['accounts', '--root', installedConfigDirectory];
+    if (accountProfile?.id) args.push('--current-account-id', accountProfile.id);
+    const child = spawn(helper, args,
       {cwd: installedConfigDirectory, detached: true, windowsHide: true, stdio: 'ignore'});
     child.once('error', reject);
     child.once('spawn', () => {child.unref(); resolve();});

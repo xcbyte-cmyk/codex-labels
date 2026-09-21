@@ -6,7 +6,7 @@ from tkinter import ttk, messagebox
 import account_profiles
 
 
-def run(root, launch, delete, *, launch_default=None, close_on_launch=False):
+def run(root, launch, delete, *, launch_default=None, close_on_launch=False, current_account_id=None):
     window = tk.Tk()
     window.title('Codex Labels · 계정별 실행')
     window.geometry('590x500'); window.minsize(550, 460)
@@ -25,9 +25,14 @@ def run(root, launch, delete, *, launch_default=None, close_on_launch=False):
 
     def refresh(selected=None):
         tree.delete(*tree.get_children())
+        if launch_default:
+            tree.insert('', 'end', iid='default', values=('현재 계정 · 기본 프로필 (기존 로그인과 작업)',))
         for item in account_profiles.list_accounts(root):
-            tree.insert('', 'end', iid=item['id'], values=(item['name'] + (' · 삭제 미완료' if item.get('deleting') else ''),))
-        if selected: tree.selection_set(selected)
+            suffix = ' · 현재 창' if item['id'] == current_account_id else ' · 삭제 미완료' if item.get('deleting') else ''
+            tree.insert('', 'end', iid=item['id'], values=(item['name'] + suffix,))
+        selection = selected or (current_account_id if current_account_id in tree.get_children() else 'default' if launch_default else None)
+        if selection: tree.selection_set(selection)
+        update_delete_state()
 
     def add():
         if busy: return
@@ -51,12 +56,18 @@ def run(root, launch, delete, *, launch_default=None, close_on_launch=False):
         selected = tree.selection()
         if selected:
             key = selected[0]
-            start_launch(lambda **kw: launch(root, key, **kw))
+            if key == 'default':
+                if launch_default: start_launch(launch_default)
+            else: start_launch(lambda **kw: launch(root, key, **kw))
+
+    def update_delete_state(_event=None):
+        if not busy:
+            delete_button.state(['disabled'] if tree.selection() == ('default',) else ['!disabled'])
 
     def delete_selected():
         nonlocal busy
         selected = tree.selection()
-        if busy or not selected: return
+        if busy or not selected or selected[0] == 'default': return
         account_id = selected[0]
         item = next((item for item in account_profiles.list_accounts(root) if item['id'] == account_id), None)
         if not item: refresh(); return
@@ -93,13 +104,14 @@ def run(root, launch, delete, *, launch_default=None, close_on_launch=False):
             button.state(['disabled'] if disabled else ['!disabled'])
         name.state(['disabled'] if disabled else ['!disabled'])
     tree.bind('<Double-1>', open_selected)
+    tree.bind('<<TreeviewSelect>>', update_delete_state)
     def poll():
         nonlocal busy, poll_timer
         while not events.empty():
             kind, value = events.get_nowait()
             if kind == 'progress': status.set(value)
             else:
-                busy = False; set_buttons(False)
+                busy = False; set_buttons(False); update_delete_state()
                 if kind == 'done' and close_on_launch:
                     window.destroy()
                     return

@@ -555,14 +555,14 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     return status
 
 
-def open_accounts(root):
+def open_accounts(root, current_account_id=None):
     import account_manager
     data_root = account_profiles.shared_root()
     return account_manager.run(data_root,
         lambda _, key, **kw: launch_account(root, key, shared=True, **kw),
         lambda _, key, **kw: delete_account(root, key, shared=True, **kw),
         launch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, **kw),
-        close_on_launch=True)
+        close_on_launch=True, current_account_id=current_account_id)
 
 
 def main():
@@ -571,6 +571,7 @@ def main():
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
     parser.add_argument('action', choices=['accounts', 'account-create', 'account-list', 'account-launch', 'account-delete', 'prepare', 'launch', 'launch-direct', 'check', 'update-check', 'update-stage', 'update-status', 'codex-status', 'rollback', 'rollback-apply'], nargs='?', default='launch')
     parser.add_argument('--account-id')
+    parser.add_argument('--current-account-id', help=argparse.SUPPRESS)
     parser.add_argument('--name')
     parser.add_argument('--confirm-delete', action='store_true', help='선택한 계정의 로컬 자료 영구 삭제 확인')
     parser.add_argument('--root', type=Path, default=default_root())
@@ -602,7 +603,7 @@ def main():
                 code = launcher_ui.run(prepare_selector)
                 if code:
                     return code
-                return open_accounts(root)
+                return open_accounts(root, current_account_id=args.current_account_id)
             result = prepare_selector(lambda message, percent: print(message, flush=True))
         elif args.action == 'account-create':
             if not args.name: raise ValueError('--name으로 계정 창 이름을 지정하세요.')
