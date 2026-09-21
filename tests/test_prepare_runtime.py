@@ -14,8 +14,10 @@ import prepare_runtime as builder
 def write_archive(path, files, activity=True):
     files = dict(files)
     if activity:
-        files.setdefault('webview/assets/app-initial-9aa16c63159e.js',
-            b'function cached(){C_(o,n).observeCatalogThreads(e)};function live(){C_(o,n).observeCatalogThreads(r)}')
+        controller = builder.ACTIVITY_CONTROLLER.encode()
+        files.setdefault(builder.ACTIVITY_BUNDLE,
+            b'function cached(){' + controller + b'.observeCatalogThreads(e)};function live(){' +
+            controller + b'.observeCatalogThreads(r)}')
     header = {'files': {}}
     offset = 0
     for name, data in files.items():
@@ -71,6 +73,10 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(result['.vite/build/early-bootstrap.js'][0].startswith(builder.MARKER))
         self.assertIn(b'codex-labels:save-config', result['.vite/build/preload.js'][0])
         self.assertIn(b'codex-labels:save-config', result['.vite/build/codex-labels-main.cjs'][0])
+        self.assertIn(b'codex-labels:vocabulary-summarize', result['.vite/build/preload.js'][0])
+        self.assertIn(b'registerVocabulary', result['.vite/build/codex-labels-main.cjs'][0])
+        for name in ('vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js'):
+            self.assertEqual(result['.vite/build/codex-labels/' + name][0], (builder.ROOT/'extension'/name).read_bytes())
         location = json.loads(result['.vite/build/codex-labels-location.json'][0])
         self.assertEqual(location['configDirectory'], str(self.root/'settings'))
         for name in changed:
@@ -81,11 +87,11 @@ class BuildTests(unittest.TestCase):
     def test_activity_hook_is_version_checked_and_never_resumes_tasks(self):
         target = self.root/'patched.asar'
         builder.build_asar(self.archive, target, self.root/'settings')
-        content=read_archive(target)['webview/assets/app-initial-9aa16c63159e.js'][0]
+        content=read_archive(target)[builder.ACTIVITY_BUNDLE][0]
         self.assertIn(b'retainActiveConversation', content)
         self.assertNotIn(b'resumeConversation', content)
         self.assertEqual(content.count(b'__codexLabelsActivitySync.observe(n,'), 2)
-        self.files['webview/assets/app-initial-9aa16c63159e.js']=b'upstream changed'
+        self.files[builder.ACTIVITY_BUNDLE]=b'upstream changed'
         write_archive(self.archive,self.files)
         with self.assertRaisesRegex(RuntimeError,'Unsupported activity catalog hook'):
             builder.build_asar(self.archive,self.root/'bad.asar',self.root)

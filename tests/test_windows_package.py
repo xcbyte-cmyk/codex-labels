@@ -20,11 +20,13 @@ class PackageTests(unittest.TestCase):
             output = root/'bundle.zip'
             package.write_zip(exe, output, 'a'*40, [(license_file, 'PYTHON-LICENSE.txt')])
             with zipfile.ZipFile(output) as archive:
-                self.assertEqual(set(archive.namelist()), {package.HELPER_NAME, '설치.cmd', '실행.cmd',
+                self.assertEqual(set(archive.namelist()), {package.HELPER_NAME, '설치.cmd', '실행.cmd', '계정별 실행.cmd',
                     '사용안내.txt', 'build-info.json', 'PYTHON-LICENSE.txt'})
                 info = json.loads(archive.read('build-info.json'))
                 self.assertFalse(info['containsCodexBinaries'])
                 self.assertEqual(info['sourceCommit'], 'a'*40)
+                self.assertEqual(info['packageSchemaVersion'], 1)
+                self.assertEqual(set(info['updateFiles']), {'CodexLabelsHelper.exe', 'build-info.json'})
 
     @unittest.skipUnless(os.environ.get('CODEX_LABELS_PACKAGE_ZIP'), 'Frozen artifact smoke is opt-in')
     def test_frozen_helper_prepares_checks_updates_and_creates_scoped_shortcut(self):

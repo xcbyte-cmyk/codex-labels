@@ -183,6 +183,7 @@
     };
     for(const l of [...snapshot.config.labels].filter(l=>l.enabled).sort((a,b)=>a.order-b.order))add(l.name,l.backgroundColor,choose(l.id));
     add('라벨 해제',null,choose(null));add('라벨 설정…',null,()=>showSettings().catch(error));
+    if(api.vocabularyRead)add('단어장…',null,()=>{closeMenu();window.dispatchEvent(new Event('codex-labels:open-vocabulary'));});
     if(snapshot.configError){const p=document.createElement('p');p.className='notice';p.textContent='설정 오류로 마지막 정상 설정을 표시합니다: '+snapshot.configError;menu.append(p);}
     document.body.append(menu);const r=badge.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(r.left,innerWidth-menu.offsetWidth-8))+'px';menu.style.top=Math.max(8,Math.min(r.bottom+6,innerHeight-menu.offsetHeight-8))+'px';menu.querySelector('button')?.focus({preventScroll:true});
   }

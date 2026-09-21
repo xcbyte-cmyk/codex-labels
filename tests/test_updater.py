@@ -50,6 +50,15 @@ class UpdateTests(unittest.TestCase):
         for name in ['labels.json', 'assignments.json', 'CodexLabelsHelper.exe']:
             self.assertEqual((self.root/name).read_bytes(), b'unchanged')
 
+    def test_new_safe_top_level_release_files_are_ignored(self):
+        files = {**self.files, '계정별 실행.cmd': b'not executed', 'PSUTIL-LICENSE.txt': b'license'}
+        data = self.bundle(files)
+        result = updater.stage(self.root, self.current, self.supported, self.reader(data, self.metadata(data)))
+        staged = self.root/'.updates'/result['stagedDirectory']
+        self.assertEqual({p.name for p in staged.iterdir()}, set(self.files))
+        self.assertFalse((staged/'계정별 실행.cmd').exists())
+        self.assertFalse((staged/'PSUTIL-LICENSE.txt').exists())
+
     def test_no_downgrade_or_same_version_download_and_no_release(self):
         for tag in ['v0.1.0', 'v0.2.0']:
             data = self.bundle()
@@ -57,6 +66,10 @@ class UpdateTests(unittest.TestCase):
             self.assertFalse(result['available'])
         self.assertFalse(updater.release(self.current, lambda *_: b'null')[0]['available'])
         self.assertFalse((self.root/'.updates').exists())
+
+    def test_account_launcher_and_process_library_license_are_allowed(self):
+        files = {**self.files, '계정별 실행.cmd': b'fixture-launcher', 'PSUTIL-LICENSE.txt': b'fixture-license'}
+        updater.unpack(self.bundle(files), self.latest, self.supported)
 
     def test_checksum_mismatch_does_not_stage(self):
         data = self.bundle()
@@ -74,13 +87,35 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaises(ValueError): updater.release(self.current, self.reader(metadata=meta))
 
     def test_zip_traversal_personal_files_duplicates_and_symlink_rejected(self):
-        for name in ['../escape.exe', 'labels.json', 'runtime/app/ChatGPT.exe', 'C:/evil.exe']:
+        for name in ['../escape.exe', '..', 'labels.json', 'ASSIGNMENTS.JSON', 'runtime/app/ChatGPT.exe',
+                     'runtime\\app\\ChatGPT.exe', 'C:/evil.exe']:
             with self.assertRaises(ValueError): updater.unpack(self.bundle({**self.files,name:b'x'}), self.latest,self.supported)
         stream=io.BytesIO()
         with zipfile.ZipFile(stream,'w') as z:
             for name, data in self.files.items():z.writestr(name,data)
             with self.assertWarns(UserWarning):z.writestr('build-info.json',b'{}')
         with self.assertRaises(ValueError):updater.unpack(stream.getvalue(),self.latest,self.supported)
+
+        stream=io.BytesIO()
+        with zipfile.ZipFile(stream,'w') as z:
+            for name, data in self.files.items():z.writestr(name,data)
+            z.writestr('BUILD-INFO.JSON', b'{}')
+        with self.assertRaises(ValueError):updater.unpack(stream.getvalue(),self.latest,self.supported)
+
+    def test_package_schema_declares_only_supported_update_files(self):
+        for schema, files in [(2, sorted(updater.UPDATE_FILES)),
+                              (1, ['build-info.json', 'CodexLabelsHelper.exe', 'future.exe']),
+                              (1, ['build-info.json']), (1, [{'name':'build-info.json'}])]:
+            info=json.loads(self.files['build-info.json'])
+            info.update(packageSchemaVersion=schema, updateFiles=files)
+            bundle=self.bundle({**self.files, 'build-info.json':json.dumps(info).encode()})
+            with self.assertRaisesRegex(ValueError, '새 설치 ZIP'):
+                updater.unpack(bundle,self.latest,self.supported)
+
+    def test_v030_style_package_remains_forward_compatible(self):
+        files={**self.files, '계정별 실행.cmd':b'launcher', 'PSUTIL-LICENSE.txt':b'license'}
+        extracted=updater.unpack(self.bundle(files),self.latest,self.supported)
+        self.assertEqual(set(extracted),updater.UPDATE_FILES)
         stream=io.BytesIO()
         with zipfile.ZipFile(stream,'w') as z:
             info=zipfile.ZipInfo('CodexLabelsHelper.exe');info.external_attr=(0o120777<<16)

@@ -10,11 +10,14 @@ import struct
 import uuid
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'OpenAI.Codex_26.911.7940.0_x64__2p2nqsd0c76g0'
+VERSION = 'OpenAI.Codex_26.915.4065.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
-SUPPORTED_APP_VERSION = '26.911.61220'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs')
+SUPPORTED_APP_VERSION = '26.915.31945'
+ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
+ACTIVITY_CONTROLLER = 'ep(o,n)'
+ACTIVITY_COORDINATION = 'yU.clientCoordination'
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
@@ -101,7 +104,7 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                 changed['.vite/build/codex-labels/' + name] = (ROOT/'extension'/name).read_bytes()
             # Exact-version hooks into the existing catalog observation path.
             # Fail closed on upstream changes; never infer active state from labels.
-            activity_bundle = 'webview/assets/app-initial-9aa16c63159e.js'
+            activity_bundle = ACTIVITY_BUNDLE
             if activity_bundle not in original:
                 raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
             activity_source = read(activity_bundle).decode('utf-8')
@@ -111,16 +114,16 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                     raise RuntimeError('Unknown activity patch; keep the current runtime.')
                 activity_source = activity_source[len(old_activity):]
                 for variable in ('e', 'r'):
-                    inserted = f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)'
+                    inserted = f',globalThis.__codexLabelsActivitySync.observe(n,{variable},{ACTIVITY_CONTROLLER},{ACTIVITY_COORDINATION})'
                     if activity_source.count(inserted) != 1:
                         raise RuntimeError('Unknown activity hook; keep the current runtime.')
                     activity_source = activity_source.replace(inserted, '', 1)
             for variable in ('e', 'r'):
-                anchor = f'C_(o,n).observeCatalogThreads({variable})'
+                anchor = f'{ACTIVITY_CONTROLLER}.observeCatalogThreads({variable})'
                 if activity_source.count(anchor) != 1:
                     raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
                 activity_source = activity_source.replace(anchor, anchor +
-                    f',globalThis.__codexLabelsActivitySync.observe(n,{variable},C_(o,n),qY.clientCoordination)')
+                    f',globalThis.__codexLabelsActivitySync.observe(n,{variable},{ACTIVITY_CONTROLLER},{ACTIVITY_COORDINATION})')
             changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
             if extra:
                 changed.update(extra)
@@ -253,7 +256,7 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None, refre
         files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root, refresh=refresh)
         if file_hash(source/'resources/app.asar') != source_hash:
             raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
-        manifest = {'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
+        manifest = {'accountHostProtocol': 1, 'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
                     'patchedAsarSha256': file_hash(stage/'resources/app.asar'), 'changedArchiveFiles': files,
                     'configPath': str(root/'labels.json'), 'originalInstallModified': False,
                     'liveAppActivated': False, 'launchMode': 'side-by-side', 'nativeNotificationClickVerified': False}
