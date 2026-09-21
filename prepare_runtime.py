@@ -17,7 +17,7 @@ SUPPORTED_APP_VERSION = '26.915.31945'
 ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
 ACTIVITY_CONTROLLER = 'ep(o,n)'
 ACTIVITY_COORDINATION = 'yU.clientCoordination'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'account-switch-profiles.cjs', 'account-session-router.cjs', 'account-switcher.cjs', 'account-switcher-preload.js', 'account-switcher-renderer.js')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
@@ -94,7 +94,7 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                 raise RuntimeError('The source is already patched; use the unmodified installed app.')
             changed = {
                 early: prefix + early_source,
-                preload: preload_source + b'\n' + MARKER + b'\n' + (ROOT/'extension/preload.js').read_bytes(),
+                preload: preload_source + b'\n' + MARKER + b'\n' + (ROOT/'extension/account-switcher-preload.js').read_bytes() + b'\n' + (ROOT/'extension/preload.js').read_bytes(),
                 '.vite/build/codex-labels-main.cjs': (ROOT/'extension/main.cjs').read_bytes(),
                 '.vite/build/codex-labels-store.cjs': (ROOT/'extension/store.cjs').read_bytes(),
                 '.vite/build/codex-labels-renderer.js': (ROOT/'extension/renderer.js').read_bytes(),

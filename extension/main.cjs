@@ -109,6 +109,18 @@ function broadcastConfigChange() {
     } catch { /* A closing renderer must not prevent updates to other windows. */ }
   }
 }
+// Opt-in per managed profile until the supported Windows Desktop transport is live-verified.
+// An empty local marker avoids forwarding new environment flags through the profile sanitizer.
+let accountSwitcher = null;
+if (accountProfile && !smokeDirectory) {
+  const marker = path.join(accountProfile.directory, 'session-switcher.enabled');
+  let enabled = false;
+  try { const stat = fs.lstatSync(marker); enabled = stat.isFile() && !stat.isSymbolicLink() && stat.size === 0; } catch {}
+  if (enabled) accountSwitcher = require('./codex-labels/account-switcher.cjs').install({
+    ipcMain, check, accountProfile, executable: path.join(process.resourcesPath, 'codex.exe'),
+    getWindows: () => BrowserWindow.getAllWindows(), trustedContent
+  });
+}
 const notifications = accountProfile ? disabledNotifications() : createNotifications({app, shell, Notification, profile, defaultProfile,
   getWindows: () => BrowserWindow.getAllWindows(), trustedContent,
   onStatus: notification => recordStatus({notification})});
@@ -147,6 +159,7 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
+  (accountSwitcher ? fs.readFileSync(path.join(__dirname, 'codex-labels/account-switcher-renderer.js'), 'utf8') + '\n' : '') +
   fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8') + (accountProfile ? `\n(() => {
     if (document.getElementById('codex-labels-account-name')) return;
     const badge = document.createElement('div'); badge.id = 'codex-labels-account-name';
@@ -183,7 +196,7 @@ app.on('web-contents-created', (_event, contents) => {
     }).catch(() => recordStatus({status: 'renderer-initialization-failed'}));
   });
 });
-app.once('will-quit', () => { vocabulary.dispose(); notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
+app.once('will-quit', () => { accountSwitcher?.dispose(); vocabulary.dispose(); notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
 recordStatus({notification: notifications.status()});
 // Exercise the shipped Electron/preload/renderer bridge without account onboarding.
 if (smokeDirectory) app.whenReady().then(() => {
