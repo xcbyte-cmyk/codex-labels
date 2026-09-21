@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const {createSnapshotCache} = require('./snapshot-cache.cjs');
 function mainHarness(t, account = null) {
   const handlers = new Map(), calls = [], paths = [], windows = [], sent = [];
-  let changed, cache, reads = 0;
+  let changed, cache, reads = 0, switcherOptions;
   let snapshot = {configRevision: 'initial', configError: null, config: {}, assignments: {}};
   const store = {configPath: '/config', snapshot: () => { reads++; return snapshot; },
     assign: (key, id) => (snapshot = {...snapshot, assignments: {[key]: id}}),
@@ -23,7 +23,7 @@ function mainHarness(t, account = null) {
   };
   const writes = [];
   const mockFs = {mkdirSync() {}, writeFileSync: (file, value) => writes.push({file, value}), renameSync() {}, unlinkSync() {},
-    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : '/* labels */'};
+    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : file.endsWith('session-switcher-renderer.js') ? '/* workspace switcher */' : '/* labels */'};
   const dirname = path.resolve('fixture', '.vite', 'build');
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {
     __dirname: dirname, process: {platform: 'win32', env: {LOCALAPPDATA: path.resolve('fixture', 'Local')},
@@ -33,6 +33,7 @@ function mainHarness(t, account = null) {
       if (name === 'electron') return {app, ipcMain: {handle: (channel, fn) => handlers.set(channel, fn)},
         shell: {openPath: async () => ''}, BrowserWindow: {getAllWindows: () => windows, fromWebContents: content => windows.find(w => w.webContents === content)}, Notification: {}};
       if (name === 'node:fs') return mockFs;
+      if (name === './codex-labels/session-switcher/index.cjs') return {install: options => { switcherOptions = options; return {dispose(){}}; }};
       if (name === './codex-labels-store.cjs') return {createStore: () => store};
       if (name === './codex-labels/vocabulary-ipc.cjs') return {registerVocabulary: () => ({dispose(){}})};
       if (name === './codex-labels/snapshot-cache.cjs') return {createSnapshotCache: (value, directory, options) => {
@@ -54,7 +55,7 @@ function mainHarness(t, account = null) {
       getLastWebPreferences: () => ({preload: trustedPreload ? path.join(dirname, 'preload.js') : 'foreign-preload.js'})});
     return {sender: contents, senderFrame: contents.mainFrame};
   }
-  return {handlers, calls, paths, event, app, windows, sent, writes, changed: () => changed(), cache, get reads() { return reads; }};
+  return {handlers, calls, paths, event, app, windows, sent, writes, switcherOptions, changed: () => changed(), cache, get reads() { return reads; }};
 }
 test('account onboarding reports UI readiness without pretending login succeeded', async t => {
   const account = {id:'a'.repeat(32), name:'회사 A', directory:path.resolve('fixture','account'), home:path.resolve('fixture','home')};
@@ -135,16 +136,18 @@ test('notification capture source is injected before legacy stopImmediatePropaga
   event.sender.executeJavaScript = async value => { source = value; };
   h.app.emit('web-contents-created', {}, event.sender);
   event.sender.emit('did-finish-load');
-  assert.equal(source, '/* notification */\n/* vocabulary */\n/* labels */');
+  assert.equal(source, '/* notification */\n/* vocabulary */\n/* workspace switcher */\n/* labels */');
 });
 test('preload subscriptions hide the native event and return an unsubscribe function', () => {
-  let api, removed;
+  let removed; const exposed = new Map();
   const listeners = new Map(), invokes = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8'), {
-    require: () => ({contextBridge: {exposeInMainWorld: (_name, value) => { api = value; }},
+    require: () => ({contextBridge: {exposeInMainWorld: (name, value) => { assert.equal(exposed.has(name), false); exposed.set(name, value); }},
       ipcRenderer: {invoke: (...args) => { invokes.push(args); return Promise.resolve(); }, on: (channel, fn) => { listeners.set(channel, fn); },
         removeListener: (channel, fn) => { removed = fn; if (listeners.get(channel) === fn) listeners.delete(channel); }}})
   });
+  const api = exposed.get('codexLabels');
+  assert.ok(exposed.get('codexSessionSwitcher'));
   let args; const unsubscribe = api.onActivateThread((...values) => { args = values; });
   const listener = listeners.get('codex-labels:activate-thread');
   const value = {threadId: 't'}; listener({sender: 'must not leak'}, value);
@@ -158,4 +161,33 @@ test('preload subscriptions hide the native event and return an unsubscribe func
   api.read('known-version'); api.read();
   assert.deepEqual(invokes, [['codex-labels:read', 'known-version'], ['codex-labels:read', undefined]]);
   assert.equal(api.ipcRenderer, undefined);
+});
+
+test('workspace switcher is wired to the trusted main-process boundary', t => {
+  const h = mainHarness(t), options = h.switcherOptions;
+  assert.equal(options.enabled, true);
+  assert.equal(options.currentProfileId, null);
+  assert.equal(options.executable, path.resolve('fixture', 'resources', 'codex.exe'));
+  assert.equal(options.storageDirectory, path.resolve('fixture', 'config', 'session-switches'));
+  assert.equal(typeof options.check, 'function');
+  assert.throws(() => options.check(h.event('https://example.com')), /접근할 수 없는/);
+  options.check(h.event());
+});
+
+test('workspace preload sends only fixed operations and never exposes native events', () => {
+  const exposed = new Map(), listeners = new Map(), invokes = [];
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8'), {
+    require: () => ({contextBridge: {exposeInMainWorld: (name, value) => exposed.set(name, value)},
+      ipcRenderer: {invoke: (...args) => invokes.push(args), on: (channel, listener) => listeners.set(channel, listener),
+        removeListener: (channel) => listeners.delete(channel)}})
+  });
+  const api = exposed.get('codexSessionSwitcher'); let received;
+  const off = api.onChanged((...args) => { received = args; });
+  listeners.get('codex-labels:session-switcher-changed')({secret: true}, {unexpected: true});
+  assert.deepEqual(received, []); off(); assert.equal(listeners.size, 0);
+  const value = {profileId: 'b'.repeat(32), confirmContextTransfer: true};
+  api.switchAccount(value); api.recover({confirmContextTransfer: true});
+  assert.equal(invokes[0][0], 'codex-labels:session-switcher-switch'); assert.equal(invokes[0][1], value);
+  assert.equal(invokes[1][0], 'codex-labels:session-switcher-recover');
+  assert.equal(api.invoke, undefined); assert.equal(api.ipcRenderer, undefined);
 });

@@ -24,7 +24,9 @@ class NotificationBuildTests(unittest.TestCase):
         extension.mkdir(parents=True)
         # These tests exercise new modules + packaging, not the legacy label UI/store.
         for name in ['main.cjs', 'preload.js', *builder.EXTRA_EXTENSION_FILES]:
-            shutil.copyfile(SOURCE_ROOT/'extension'/name, extension/name)
+            destination = extension/name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SOURCE_ROOT/'extension'/name, destination)
         (extension/'renderer.js').write_text('/* synthetic legacy renderer */', encoding='utf-8')
         (extension/'store.cjs').write_text('/* synthetic legacy store */', encoding='utf-8')
         (self.project/'labels.example.json').write_text('{"synthetic":true}', encoding='utf-8')
