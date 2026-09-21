@@ -22,7 +22,7 @@ Codex Labels 창에서 제목 앞 **＋ → 상태 선택**을 사용합니다. 
 
 ## 지원 환경
 
-v0.3.2는 Windows x64, Microsoft Store Codex **패키지 `26.915.4065.0` / 내부 앱 `26.915.31945`**을 지원합니다. 배포 ZIP은 Python·Git·Node.js 설치 없이 사용할 수 있습니다. 소스에서 준비하려면 Python 3.11 이상이 필요하며 Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
+v0.3.3은 Windows x64, Microsoft Store Codex **패키지 `26.915.4065.0` / 내부 앱 `26.915.31945`**을 지원합니다. 배포 ZIP은 Python·Git·Node.js 설치 없이 사용할 수 있습니다. 소스에서 준비하려면 Python 3.11 이상이 필요하며 Node.js 22 이상은 테스트용입니다. 지원하지 않는 앱 버전과 이미 패치된 설치본은 거부합니다. 설치본의 Owl 런타임을 그대로 사용하며 일반 Electron 실행 파일로 교체하지 않습니다.
 
 별도 실행본에는 MSIX 패키지 ID가 없으므로 계정 환경 선택 후 번들 `resources/codex.exe`를 `CODEX_CLI_PATH`로 설정하고 `CODEX_APP_SERVER_FORCE_CLI=1`로 실행합니다. 원본 Store 앱의 패키지 전용 초기화 경로 대신 번들 CLI를 사용합니다.
 
