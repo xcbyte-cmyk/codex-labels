@@ -188,7 +188,7 @@
     };
     for(const l of [...snapshot.config.labels].filter(l=>l.enabled).sort((a,b)=>a.order-b.order))add(l.name,l.backgroundColor,choose(l.id));
     add('라벨 해제',null,choose(null));add('라벨 설정…',null,()=>showSettings().catch(error));
-    if(api.openAccountSelector)add('Account Switcher · 계정 선택기…',null,()=>{
+    if(api.openAccountSelector)add('계정 선택기…',null,()=>{
       closeMenu();api.openAccountSelector().catch(error);
     });
     if(api.vocabularyRead)add('단어장…',null,()=>{closeMenu();window.dispatchEvent(new Event('codex-labels:open-vocabulary'));});
@@ -262,8 +262,8 @@
     const preview=element('div','cdx-settings-preview'),previewCaption=element('div','cdx-settings-help','미리보기'),previewRow=element('div','cdx-settings-preview-row'),previewBadge=element('span','cdx-settings-preview-badge'),previewHelp=element('p','cdx-settings-help');previewRow.append(previewBadge,document.createTextNode('프로젝트명'));preview.append(previewCaption,previewRow,previewHelp);editor.append(preview);
     const appearance=element('details'),appearanceTitle=element('summary',null,'배지 모양 · 모든 라벨에 적용'),appearanceFields=element('div','cdx-settings-fields cdx-settings-appearance');appearance.append(appearanceTitle,appearanceFields);editor.append(appearance);
     if(typeof api.openAccountSelector==='function'){
-      const accounts=element('section','cdx-settings-updates'),heading=element('strong',null,'Account Switcher · 계정 선택기');
-      const help=element('p','cdx-settings-help','계정별 작업 창을 선택하거나 추가합니다. 현재 창의 로그인 계정과 작업은 바뀌지 않습니다.');
+      const accounts=element('section','cdx-settings-updates'),heading=element('strong',null,'계정 선택기');
+      const help=element('p','cdx-settings-help','계정별 작업 창을 선택하거나 추가합니다. 선택한 계정은 별도 창으로 열리며, 현재 창의 로그인 계정과 작업은 바뀌지 않습니다.');
       const open=button('계정 선택기 열기',null,()=>api.openAccountSelector().catch(error=>state.message(error?.message||String(error))));
       accounts.append(heading,help,open);editor.append(accounts);
     }

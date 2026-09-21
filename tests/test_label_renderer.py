@@ -148,7 +148,7 @@ class LabelRendererTests(unittest.TestCase):
 
     def test_account_selector_entry_opens_existing_picker(self):
         self.start("addRow('first');")
-        self.choose('Account Switcher · 계정 선택기…')
+        self.choose('계정 선택기…')
         self.assertEqual(self.page.evaluate('fixture.accountSelectorOpens'), 1)
         self.badge().click()
         self.page.get_by_role('menuitem', name='라벨 설정…').click()
