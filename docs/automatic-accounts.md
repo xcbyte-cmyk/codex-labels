@@ -52,3 +52,17 @@ open validation item for Draft PR #24.
 Tests use synthetic credentials and an isolated LOCALAPPDATA. They cover a
 single button press without checkboxes/confirmation, absence of online/session
 gates, same-workspace history preservation, failed writes and recovery.
+
+## Account list storage
+
+Opening the picker collects the current and legacy credential caches and merges
+them in one registry transaction. It decrypts the registry once and writes at
+most once; reopening an unchanged list performs no encrypted write. Existing
+entries retain their names and newer tokens. The UI delegates imports to the
+account storage layer, and the handoff no longer depends on a login verifier.
+
+Removing a registration also stores an encrypted identity digest that excludes
+it from subsequent automatic imports, including after switching away from that
+account. Explicit browser registration can restore it. This affects only the
+picker's registered-account list; active auth and environment history remain.
+Existing version-1 registries without this optional metadata remain readable.

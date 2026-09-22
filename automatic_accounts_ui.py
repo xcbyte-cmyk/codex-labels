@@ -9,8 +9,8 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
-from automatic_accounts import (AccountError, Credential, Handoff, NativeVerifier,
-    Vault, WindowsDesktop, read_private, vault_path, workspace_mutex, PROFILE)
+from automatic_accounts import (AccountError, Handoff, NativeVerifier,
+    Vault, WindowsDesktop, import_existing_accounts, vault_path, workspace_mutex)
 
 MESSAGES = {
     'closing': 'Labels를 정상 종료하고 있습니다. 종료 확인창이 뜨면 확인해 주세요.',
@@ -87,23 +87,8 @@ class Picker:
         except AccountError as e: self.status.set(MESSAGES.get(e.code, '[' + e.code + ']'))
         self.controls(); self.completion_timer = None; self.poll_timer = ui.after(100, self.poll)
     def register_existing(self):
-        # Save the current file cache automatically; this is not online proof.
-        try:
-            c = Credential.parse(read_private(self.home / 'auth.json'))
-            self.current_id = self.vault.save(c, overwrite=False)
-        except AccountError: self.current_id = None
         base = Path(os.environ.get('LOCALAPPDATA', '')) / 'CodexLabels' / 'AccountWindows' / 'accounts'
-        if not base.is_dir(): return
-        # Import existing isolated profiles once, without replacing fresher vault snapshots.
-        for d in list(base.iterdir())[:64]:
-            if not PROFILE.fullmatch(d.name): continue
-            try:
-                import json
-                m = json.loads(read_private(d / 'account.json'))
-                if m.get('id') != d.name or not isinstance(m.get('name', ''), str): continue
-                self.vault.save(Credential.parse(read_private(d / 'codex-home' / 'auth.json')),
-                                m.get('name', ''), overwrite=False)
-            except (AccountError, ValueError): continue
+        self.current_id = import_existing_accounts(self.vault, self.home, base)
     def refresh(self):
         selected = self.tree.selection()
         for row in self.tree.get_children(): self.tree.delete(row)
@@ -154,11 +139,11 @@ class Picker:
     def switch(self):
         key = self.selected()
         if not key: return
-        handoff = Handoff(self.home, self.vault, self.verifier, self.desktop,
+        handoff = Handoff(self.home, self.vault, self.desktop,
                           progress=lambda code: self.events.put(('progress', code)))
         self.start(lambda: handoff.switch(key), switching=True)
     def restore(self):
-        h = Handoff(self.home, self.vault, self.verifier, self.desktop)
+        h = Handoff(self.home, self.vault, self.desktop)
         self.start(h.recover, switching=True)
     def poll(self):
         try:

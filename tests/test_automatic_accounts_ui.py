@@ -52,6 +52,17 @@ class PickerTests(unittest.TestCase):
         self.assertEqual(len(self.vault.list()), 3)
         self.assertEqual(history.read_text(), 'synthetic history')
         self.assertEqual(read_private(self.home / 'auth.json'), credential('A').raw)
+        imported = next(item['id'] for item in self.vault.list() if item['name'] == '기존 계정 C')
+        self.vault.remove(imported)
+        self.p.register_existing(); self.p.refresh()
+        self.assertEqual(len(self.vault.list()), 2)
+        self.assertEqual(history.read_text(), 'synthetic history')
+    def test_removed_current_registration_is_not_readded_when_picker_reopens(self):
+        self.vault.remove(self.p.current_id)
+        self.p.register_existing(); self.p.refresh()
+        self.assertIsNone(self.p.current_id)
+        self.assertEqual(len(self.vault.list()), 1)
+        self.assertEqual(read_private(self.home / 'auth.json'), credential('A').raw)
     def test_switch_button_automates_file_verification_and_relaunch(self):
         self.p.tree.selection_set(self.bid)
         with patch('automatic_accounts_ui.messagebox.askyesno',side_effect=AssertionError('extra confirmation')):self.p.change.invoke()

@@ -216,11 +216,14 @@ class Vault:
         raw = json.dumps(data, ensure_ascii=False).encode()
         require(len(raw) <= MAX_VAULT, 'VAULT_FULL')
         atomic_write(file, self.protector.seal(raw))
-    def _snapshot(self):
+    def _registry(self):
         """Read and validate once per operation; never cache refreshed credentials."""
-        if not self.file.exists(): return []
-        v = self._load(self.file)
+        v = self._load(self.file) if self.file.exists() else {'version': 1, 'accounts': []}
+        require(isinstance(v, dict), 'VAULT_UNAVAILABLE')
         require(v.get('version') == 1 and isinstance(v.get('accounts'), list) and len(v['accounts']) <= 64, 'VAULT_UNAVAILABLE')
+        excluded = v.get('excludedImports', [])
+        require(isinstance(excluded, list) and all(isinstance(key, str) and re.fullmatch(r'[0-9a-f]{64}', key)
+                for key in excluded), 'VAULT_UNAVAILABLE')
         ids = set()
         snapshot = []
         for e in v['accounts']:
@@ -228,7 +231,17 @@ class Vault:
             ids.add(e['id'])
             require(isinstance(e.get('name'), str) and 0 < len(e['name']) <= 80, 'VAULT_UNAVAILABLE')
             snapshot.append((e, Credential.parse(e['auth'].encode())))
-        return snapshot
+        return v, snapshot
+    def _snapshot(self):
+        return self._registry()[1]
+    @staticmethod
+    def _identity_key(credential):
+        return hashlib.sha256(json.dumps(credential.identity).encode()).hexdigest()
+    @staticmethod
+    def _entry(credential, name='', old=None):
+        label = name.strip() or (old['name'] if old else credential.email or '계정 ' + credential.identity[0][-6:])
+        require(0 < len(label) <= 80 and not any(ord(ch) < 32 for ch in label), 'INVALID_NAME')
+        return {'id': old['id'] if old else uuid.uuid4().hex, 'name': label, 'auth': credential.raw.decode('utf-8')}
     def entries(self):
         return [entry for entry, _ in self._snapshot()]
     @staticmethod
@@ -243,27 +256,52 @@ class Vault:
         require(isinstance(profile_id, str) and PROFILE.fullmatch(profile_id), 'INVALID_PROFILE')
         entry, credential = self._find(self._snapshot(), profile_id)
         return entry['name'], credential
-    def save(self, c: Credential, name='', profile_id=None, overwrite=True):
-        snapshot = self._snapshot()
-        entries = [entry for entry, _ in snapshot]
+    def save(self, c: Credential, name='', profile_id=None, overwrite=True, *, automatic=False):
+        registry, snapshot = self._registry()
+        if automatic and self._identity_key(c) in registry.get('excludedImports', []):
+            return None
+        entries = registry['accounts']
         old = next((e for e, credential in snapshot if credential.identity == c.identity), None)
         if profile_id:
             target = next(((e, credential) for e, credential in snapshot if e['id'] == profile_id), None)
             require(target is not None and target[1].identity == c.identity, 'IDENTITY_MISMATCH')
             old = target[0]
         if old and not overwrite: return old['id']
-        label = name.strip() or (old['name'] if old else c.email or '계정 ' + c.identity[0][-6:])
-        require(0 < len(label) <= 80 and not any(ord(ch) < 32 for ch in label), 'INVALID_NAME')
-        entry = {'id': old['id'] if old else uuid.uuid4().hex, 'name': label, 'auth': c.raw.decode('utf-8')}
+        entry = self._entry(c, name, old)
         if old: entries[entries.index(old)] = entry
         else: require(len(entries) < 64, 'VAULT_FULL'); entries.append(entry)
-        self._save(self.file, {'version': 1, 'accounts': entries})
+        if overwrite:
+            registry['excludedImports'] = [key for key in registry.get('excludedImports', []) if key != self._identity_key(c)]
+        self._save(self.file, registry)
         return entry['id']
+    def import_accounts(self, candidates):
+        """Merge a batch once, preserving newer cache entries and removed registrations."""
+        registry, snapshot = self._registry()
+        by_identity = {credential.identity: entry['id'] for entry, credential in snapshot}
+        excluded = set(registry.get('excludedImports', []))
+        changed = False
+        for credential, name in candidates:
+            if credential.identity in by_identity or self._identity_key(credential) in excluded:
+                continue
+            if len(registry['accounts']) >= 64:
+                break
+            try:
+                entry = self._entry(credential, name)
+            except AccountError:
+                continue
+            registry['accounts'].append(entry)
+            by_identity[credential.identity] = entry['id']
+            changed = True
+        if changed:
+            self._save(self.file, registry)
+        return by_identity
     def remove(self, profile_id):
         require(isinstance(profile_id, str) and PROFILE.fullmatch(profile_id), 'INVALID_PROFILE')
-        snapshot = self._snapshot()
-        self._find(snapshot, profile_id)
-        self._save(self.file, {'version': 1, 'accounts': [e for e, _ in snapshot if e['id'] != profile_id]})
+        registry, snapshot = self._registry()
+        _, credential = self._find(snapshot, profile_id)
+        registry['accounts'] = [e for e, _ in snapshot if e['id'] != profile_id]
+        registry['excludedImports'] = sorted(set(registry.get('excludedImports', [])) | {self._identity_key(credential)})
+        self._save(self.file, registry)
     def begin(self, source: Credential | None, target: Credential):
         require(not self.journal.exists(), 'RECOVERY_REQUIRED')
         self._save(self.journal, {'version': 1, 'source': source.raw.decode() if source else None, 'targetIdentity': list(target.identity)})
@@ -281,6 +319,30 @@ class Vault:
         self.finish()
         return old
     def finish(self): self.journal.unlink(missing_ok=True)
+
+
+def import_existing_accounts(vault: Vault, home: Path, legacy_root: Path):
+    """Collect local caches before a single registry merge; no online requests."""
+    candidates = []
+    current = None
+    try:
+        current = Credential.parse(read_private(home / 'auth.json'))
+        candidates.append((current, ''))
+    except AccountError:
+        pass
+    if legacy_root.is_dir():
+        directories = sorted(d for d in legacy_root.iterdir() if PROFILE.fullmatch(d.name))
+        for directory in directories[:64]:
+            try:
+                metadata = json.loads(read_private(directory / 'account.json'))
+                if not isinstance(metadata, dict) or metadata.get('id') != directory.name or not isinstance(metadata.get('name', ''), str):
+                    continue
+                credential = Credential.parse(read_private(directory / 'codex-home' / 'auth.json'))
+                candidates.append((credential, metadata.get('name', '')))
+            except (AccountError, ValueError):
+                continue
+    imported = vault.import_accounts(candidates)
+    return imported.get(current.identity) if current else None
 
 def clean_environment(env: dict, home: Path) -> dict:
     denied = ('CODEX_', 'OPENAI_', 'CHATGPT_', 'ELECTRON_', '_PYI', 'PYINSTALLER_', 'NODE_')
@@ -389,10 +451,6 @@ class NativeVerifier:
         client = self.rpc_factory(self.executable, home, force_file=force_file)
         try: yield client
         finally: client.close()
-    def require_file_store(self, home):
-        with self.rpc(home) as c:
-            config = c.call('config/read', {'includeLayers': False})
-            require(config.get('config', {}).get('cli_auth_credentials_store') == 'file', 'FILE_STORE_REQUIRED')
     def _verify(self, c, expected):
         account = c.call('account/read', {'refreshToken': True})
         require(account.get('account', {}).get('type') == 'chatgpt', 'LOGIN_REQUIRED')
@@ -402,21 +460,6 @@ class NativeVerifier:
         c.call('account/rateLimits/read')  # Online auth acceptance; no model requests.
         status = c.call('getAuthStatus', {'includeToken': True, 'refreshToken': False})
         require(identity_from_token(status.get('authToken')) == expected, 'IDENTITY_MISMATCH')
-    def prepared(self, credential):
-        with self.scratch() as p:
-            atomic_write(p / 'auth.json', credential.raw)
-            with self.rpc(p, True) as c: self._verify(c, credential.identity)
-            fresh = Credential.parse(read_private(p / 'auth.json'))
-            require(fresh.identity == credential.identity, 'IDENTITY_MISMATCH')
-            return fresh
-    def active(self, home, expected):
-        with self.rpc(home) as c:
-            config = c.call('config/read', {'includeLayers': False})
-            require(config.get('config', {}).get('cli_auth_credentials_store') == 'file', 'FILE_STORE_REQUIRED')
-            self._verify(c, expected)
-        current = Credential.parse(read_private(home / 'auth.json'))
-        require(current.identity == expected, 'IDENTITY_MISMATCH')
-        return current
     def browser_login(self, expected=None, cancelled=lambda: False):
         import webbrowser
         from urllib.parse import urlsplit
@@ -436,8 +479,8 @@ class NativeVerifier:
             return Credential.parse(read_private(p / 'auth.json'))
 
 class Handoff:
-    def __init__(self, home: Path, vault: Vault, verifier, desktop, progress=lambda code: None):
-        self.home, self.vault, self.verifier, self.desktop, self.progress = home, vault, verifier, desktop, progress
+    def __init__(self, home: Path, vault: Vault, desktop, progress=lambda code: None):
+        self.home, self.vault, self.desktop, self.progress = home, vault, desktop, progress
     def switch(self, profile_id):
         require(not self.vault.journal.exists(), 'RECOVERY_REQUIRED')
         name, target = self.vault.get(profile_id)
@@ -461,7 +504,7 @@ class Handoff:
         # Source may have refreshed during shutdown. Preserve the LAST source cache.
         original = self._current()
         if original:
-            self.vault.save(original)
+            self.vault.save(original, automatic=True)
         return original
 
     def _activate(self, original, prepared):

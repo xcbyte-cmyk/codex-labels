@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from automatic_accounts import (AccountError, Credential, Handoff, Vault, NativeVerifier,
+from automatic_accounts import (AccountError, Credential, Handoff, Vault,
     NativeRpc, DPAPI, atomic_write, read_private, clean_environment, WindowsDesktop)
 
 def jwt(account='A', user='uA', stamp=1):
@@ -34,25 +34,9 @@ class TestProtector:
         return base64.b64decode(data[10:])
 
 class FakeVerifier:
-    def __init__(self, log): self.log = log; self.fail = None; self.home = None
-    def require_file_store(self, home):
-        self.log.append('store-check')
-        if self.fail == 'store': raise AccountError('FILE_STORE_REQUIRED')
-    def prepared(self, value):
-        self.log.append('prepare-target')
-        if self.fail == 'prepare': raise AccountError('LOGIN_REQUIRED')
-        return credential(value.identity[0], 2)
-    def active(self, home, expected):
-        self.log.append('verify-active')
-        if self.fail == 'verify': raise AccountError('IDENTITY_MISMATCH')
-        if self.fail == 'foreign':
-            atomic_write(home / 'auth.json', credential('C').raw)
-            raise AccountError('IDENTITY_MISMATCH')
-        current = Credential.parse(read_private(home / 'auth.json'))
-        assert current.identity == expected
-        newer = credential(current.identity[0], 3)
-        atomic_write(home / 'auth.json', newer.raw)
-        return newer
+    def __init__(self, log): self.log = log
+    def browser_login(self, **kwargs):
+        raise AssertionError('Browser login must be explicitly stubbed in UI tests')
 
 class FakeDesktop:
     def __init__(self, log): self.log = log; self.busy = False; self.exit_fails = False; self.launch_fails = False; self.on_close = None
@@ -80,8 +64,8 @@ class HandoffTests(unittest.TestCase):
         (self.home / 'config.toml').write_text('cli_auth_credentials_store="file"\n')
         self.vault = Vault(self.root / 'vault', TestProtector())
         self.aid = self.vault.save(self.a, 'A'); self.bid = self.vault.save(self.b, 'B')
-        self.log = []; self.verifier = FakeVerifier(self.log); self.desktop = FakeDesktop(self.log)
-        self.h = Handoff(self.home, self.vault, self.verifier, self.desktop)
+        self.log = []; self.desktop = FakeDesktop(self.log)
+        self.h = Handoff(self.home, self.vault, self.desktop)
     def tearDown(self): self.temp.cleanup()
     def switch(self): return self.h.switch(self.bid)
     def test_selection_performs_actual_file_handoff_and_relaunch(self):
@@ -120,9 +104,7 @@ class HandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(AccountError, 'EXIT_NOT_CONFIRMED'): self.switch()
         self.assertEqual(read_private(self.home / 'auth.json'), self.a.raw); self.assertFalse(self.vault.journal.exists())
     def test_switch_does_not_call_online_verifier(self):
-        with patch.object(self.verifier, 'require_file_store', side_effect=AssertionError('unexpected RPC')), \
-                patch.object(self.verifier, 'prepared', side_effect=AssertionError('unexpected RPC')), \
-                patch.object(self.verifier, 'active', side_effect=AssertionError('unexpected RPC')):
+        with patch('automatic_accounts.NativeRpc', side_effect=AssertionError('unexpected RPC')):
             self.switch()
     def test_failed_auth_write_preserves_source(self):
         real_write = atomic_write
@@ -188,6 +170,40 @@ class HandoffTests(unittest.TestCase):
         fresh = credential('B', 12)
         other.save(fresh, profile_id=self.bid)
         self.assertEqual(self.vault.get(self.bid)[1].raw, fresh.raw)
+    def test_bulk_import_decrypts_and_writes_once_then_is_read_only(self):
+        candidates = [(credential('legacy-' + str(i)), '환경 ' + str(i)) for i in range(20)]
+        with patch.object(self.vault.protector, 'open', wraps=self.vault.protector.open) as decrypt, \
+                patch.object(self.vault.protector, 'seal', wraps=self.vault.protector.seal) as encrypt:
+            result = self.vault.import_accounts(candidates)
+            self.assertEqual(len(result), 22)
+            self.assertEqual(decrypt.call_count, 1)
+            self.assertEqual(encrypt.call_count, 1)
+            decrypt.reset_mock(); encrypt.reset_mock()
+            self.vault.import_accounts(candidates)
+            self.assertEqual(decrypt.call_count, 1)
+            encrypt.assert_not_called()
+    def test_bulk_import_preserves_fresh_tokens_and_existing_names(self):
+        fresh = credential('B', 99)
+        self.vault.save(fresh, '갱신 계정 B', self.bid)
+        self.vault.import_accounts([(self.b, '오래된 이름'), (self.b, '중복')])
+        name, saved = self.vault.get(self.bid)
+        self.assertEqual((name, saved.raw), ('갱신 계정 B', fresh.raw))
+    def test_removed_registration_stays_removed_after_reopen_and_other_saves(self):
+        self.vault.remove(self.bid)
+        self.vault.save(credential('C'))
+        reopened = Vault(self.vault.directory, TestProtector())
+        reopened.import_accounts([(self.b, 'B')])
+        self.assertNotIn(self.b.identity, {c.identity for _, c in reopened._snapshot()})
+        self.assertIsNone(reopened.save(self.b, automatic=True))
+        restored = reopened.save(self.b, '명시적 재등록')
+        self.assertEqual(reopened.get(restored)[1].identity, self.b.identity)
+    def test_switch_does_not_reregister_a_removed_source(self):
+        self.vault.remove(self.aid)
+        self.switch()
+        self.assertNotIn(self.a.identity, {c.identity for _, c in self.vault._snapshot()})
+    def test_legacy_registry_without_exclusion_metadata_is_readable(self):
+        self.vault._save(self.vault.file, {'version': 1, 'accounts': self.vault.entries()})
+        self.assertEqual(self.vault.get(self.aid)[1].raw, self.a.raw)
     def test_missing_delete_preserves_registry(self):
         original = self.vault.file.read_bytes()
         with self.assertRaisesRegex(AccountError, 'PROFILE_NOT_FOUND'):
