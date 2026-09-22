@@ -66,6 +66,33 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual((self.source/'resources/app.asar').read_bytes(), before)
         self.assertFalse(helper.read_receipt(self.root)['liveAppActivated'])
 
+    def test_check_and_prepare_refresh_existing_runtime_after_official_upgrade(self):
+        helper.prepare(self.root, self.source)
+        write_archive(self.source/'resources/app.asar', {'package.json': b'{"version":"27.100.1"}'})
+        with patch.object(helper, 'installed_sources', return_value=[self.source]), \
+                patch('builtins.print') as output, \
+                patch.object(helper.sys, 'argv', ['windows_helper.py', 'check', '--root', str(self.root)]):
+            self.assertEqual(helper.main(), 0)
+        checked = json.loads(output.call_args.args[0])
+        self.assertTrue(checked['ready'])
+        self.assertEqual(checked['source'], str(self.root.resolve()/'runtime/app'))
+
+        self.mark_old_payload()
+        with patch.object(helper, 'installed_sources', return_value=[self.source]), \
+                patch('builtins.print') as output, \
+                patch.object(helper.sys, 'argv', ['windows_helper.py', 'prepare', '--root', str(self.root), '--no-ui']):
+            self.assertEqual(helper.main(), 0)
+        prepared = json.loads(output.call_args.args[0])
+        self.assertTrue(prepared['ready'])
+        self.assertTrue(Path(prepared['backup']).is_dir())
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'], helper.payload_fingerprint())
+
+    def test_explicit_source_is_not_replaced_by_existing_runtime(self):
+        helper.prepare(self.root, self.source)
+        write_archive(self.source/'resources/app.asar', {'package.json': b'{"version":"27.100.1"}'})
+        with self.assertRaisesRegex(ValueError, 'Unsupported'):
+            helper.preparation_source(self.root, self.source)
+
     def test_update_preserves_personal_settings_and_keeps_backup(self):
         helper.prepare(self.root, self.source)
         self.mark_old_payload()

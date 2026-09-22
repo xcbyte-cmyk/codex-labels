@@ -161,6 +161,13 @@ def valid_runtime(root, target):
         return False
 
 
+def preparation_source(root, explicit=None):
+    """Refresh a verified local runtime unless the caller chose an official source."""
+    if explicit is None and valid_runtime(root, Path(root)/'runtime/app'):
+        return None
+    return find_source(explicit)
+
+
 def recover_runtime(root):
     """Recover the tiny publish window, including pre-journal legacy updates."""
     root = Path(root).resolve()
@@ -492,7 +499,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
             if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
             try:
-                base = None if source is None and valid_runtime(root, root/'runtime/app') else find_source(source)
+                base = preparation_source(root, source)
                 prepare(root, base, progress, verify_runtime=getattr(sys, 'frozen', False))
                 exe = require_ready(root)
             except Exception as error:
@@ -661,7 +668,8 @@ def main():
                         raise RuntimeError('이 PC의 공식 Codex 설치본을 찾지 못했습니다.')
                     result = updater.stage(root, VERSION, versions)
         elif args.action == 'check':
-            source = find_source(args.source)
+            base = preparation_source(root, args.source)
+            source = root/'runtime/app' if base is None else base
             try:
                 require_ready(root); ready = True
             except RuntimeError:
@@ -670,8 +678,8 @@ def main():
                 'source': str(source), 'root': str(root), 'ready': ready, 'originalInstallModified': False}
         elif args.action == 'prepare':
             with preparation_lock(root):
-                print('공식 Codex를 확인하고 라벨 기능을 준비하고 있습니다. 잠시 기다려 주세요.', flush=True)
-                result = prepare(root, find_source(args.source))
+                print('Codex 실행본을 확인하고 라벨 기능을 준비하고 있습니다. 잠시 기다려 주세요.', flush=True)
+                result = prepare(root, preparation_source(root, args.source))
                 if args.shortcut:
                     result['shortcut'] = create_shortcut(root)
             print('준비 완료. 다음부터 실행.cmd 또는 바탕화면 바로가기를 사용하세요.', flush=True)

@@ -64,6 +64,18 @@ class PackageTests(unittest.TestCase):
             self.assertTrue(run('prepare')['ready'])
             self.assertEqual((root/'labels.json').read_bytes(), custom)
             self.assertTrue(run('prepare')['alreadyPrepared'])
+            write_archive(source/'resources/app.asar', {'package.json': b'{"version":"27.100.1"}'})
+            def run_local(action):
+                result = subprocess.run([str(exe), action, '--no-ui'], capture_output=True,
+                    encoding='utf-8', timeout=120)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return json.loads(result.stdout.strip().splitlines()[-1])
+            self.assertEqual(run_local('check')['source'], str(root.resolve()/'runtime/app'))
+            receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+            receipt['helperPayloadSha256'] = 'old-payload'
+            receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+            self.assertTrue(Path(run_local('prepare')['backup']).is_dir())
+            self.assertEqual((root/'labels.json').read_bytes(), custom)
             link = root/'test shortcut.lnk'
             create_shortcut(root, link)
             self.assertTrue(link.is_file())
