@@ -77,6 +77,16 @@ test('initialize and initialized complete before join auth probes, even on a sav
   }});
   assert.equal(a.server.calls.length,0);await a.init();assert.equal(early,0);assert.equal(await run(a.client),'B');
 });
+test('Desktop may pipeline initialized before the initialize response',async t=>{
+  const h=await setup(t); let release;
+  const wait=new Promise(resolve=>{release=resolve;});
+  const a=await h.add({start:false,tweak:s=>{s.initializeWait=wait;}});
+  const response=a.client.call('initialize',{clientInfo:{name:'desktop'},capabilities:{}});
+  a.client.notify('initialized');
+  await tick(); assert.equal(a.connection.initialized,false);
+  release(); await response; await until(()=>a.connection.initialized && a.connection.verified);
+  assert.equal(h.group.phase,'idle'); assert.equal(await run(a.client),'A');
+});
 test('a joining peer is quarantined and blocks new work on existing peers until pinned auth finishes',async t=>{
   const h=await setup(t),a=await h.add();await switchTo(h.group);
   let release;const b=await h.add({start:false,tweak:s=>{s.loginWait=new Promise(r=>release=r);}});

@@ -619,6 +619,7 @@ class WorkspaceConnection extends WorkspaceGateway {
     // retain only per-connection accounting and protocol validation.
     super({...options, selectionStore: {read: () => coordinator.saved}});
     this.coordinator = coordinator; this.initialized = false; this.initializeAccepted = false;
+    this.initializedQueued = false;
     this.verified = false; this.verifiedGeneration = -1; this.inFlightWork = 0; this.accepting = 0;
     coordinator.attach(this);
   }
@@ -684,8 +685,15 @@ class WorkspaceConnection extends WorkspaceGateway {
       this.rpc.respond(m.id, Object.hasOwn(m, 'error') ? {error: m.error} : {result: m.result}); return;
     }
     if (!hasId(m)) {
-      if (m.method === 'initialized' && this.initializeAccepted && !this.initialized) {
-        this.rpc.notify(m.method, m.params); this.initialized = true; this.bootstrap();
+      if (m.method === 'initialized' && !this.initialized) {
+        if (this.initializeAccepted) {
+          this.rpc.notify(m.method, m.params); this.initialized = true; this.bootstrap();
+        } else if (this.initializePending) {
+          // Desktop may pipeline `initialized` immediately after `initialize`
+          // instead of waiting for the response. Preserve wire order without
+          // treating the next request as an uninitialized protocol violation.
+          this.initializedQueued = true;
+        }
       }
       return;
     }
@@ -698,7 +706,11 @@ class WorkspaceConnection extends WorkspaceGateway {
         this.initializePending = true;
         const r = await this.rpc.exchange(m.method, {...m.params, capabilities: {...m.params?.capabilities, experimentalApi: true}});
         this.initializePending = false; this.initializeAccepted = !r.error;
-        this.publish({id: m.id, ...r}); return;
+        this.publish({id: m.id, ...r});
+        if (this.initializeAccepted && this.initializedQueued && !this.initialized) {
+          this.initializedQueued = false; this.rpc.notify('initialized'); this.initialized = true; this.bootstrap();
+        }
+        return;
       }
       if (!this.initialized) fail('PROTOCOL_ERROR');
       const localRead = LOCAL_READS.has(m.method), authWrite = AUTH_WRITES.test(m.method), accountRead = ACCOUNT_READS.has(m.method);

@@ -41,7 +41,7 @@ class Server extends EventEmitter {
     this.calls.push({method: m.method, params: m.params});
     const p = m.params || {}, row = this.rows.find(r => r.id === p.threadId); let result;
     switch (m.method) {
-      case 'initialize': result = {userAgent: 'stream-double'}; break;
+      case 'initialize': if (this.initializeWait) await this.initializeWait; result = {userAgent: 'stream-double'}; break;
       case 'account/read': result = {account: this.value ? {type: 'chatgpt', email: 'fixture@example.invalid'} : null}; break;
       case 'getAuthStatus': result = {authToken: this.value}; break;
       case 'account/rateLimits/read':
