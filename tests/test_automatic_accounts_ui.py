@@ -39,21 +39,22 @@ class PickerTests(unittest.TestCase):
     def test_current_account_is_pre_registered(self):
         self.assertEqual(len(self.vault.list()),2);self.assertTrue(self.p.tree.selection())
     def test_switch_button_automates_file_verification_and_relaunch(self):
-        self.p.tree.selection_set(self.bid);self.p.saved.set(True);self.p.consent.set(True)
-        with patch('automatic_accounts_ui.messagebox.askyesno',return_value=True):self.p.change.invoke()
+        self.p.tree.selection_set(self.bid)
+        with patch('automatic_accounts_ui.messagebox.askyesno',side_effect=AssertionError('extra confirmation')):self.p.change.invoke()
         self.settle()
         self.assertEqual(Credential.parse(read_private(self.home/'auth.json')).identity,credential('B').identity)
         self.assertIn('exit',self.log);self.assertIn('reopen',self.log);self.assertTrue(self.p.completed)
-    def test_missing_consent_cannot_trigger_handoff(self):
+    def test_no_checkboxes_or_extra_consent_required(self):
+        def widgets(parent):
+            for child in parent.winfo_children():
+                yield child
+                yield from widgets(child)
+        self.assertFalse(any(w.winfo_class() in ('TCheckbutton', 'Checkbutton') for w in widgets(self.ui)))
         self.p.tree.selection_set(self.bid);self.p.change.invoke();self.ui.update()
-        self.assertEqual(self.log,[]);self.assertIn('확인',self.p.status.get())
-    def test_cancel_confirmation_leaves_app_and_credentials(self):
-        self.p.tree.selection_set(self.bid);self.p.saved.set(True);self.p.consent.set(True)
-        with patch('automatic_accounts_ui.messagebox.askyesno',return_value=False):self.p.change.invoke()
-        self.assertEqual(self.log,[])
+        self.settle();self.assertTrue(self.p.completed)
     def test_broken_exit_is_displayed_without_success(self):
-        self.desktop.exit_fails=True;self.p.tree.selection_set(self.bid);self.p.saved.set(True);self.p.consent.set(True)
-        with patch('automatic_accounts_ui.messagebox.askyesno',return_value=True):self.p.change.invoke()
+        self.desktop.exit_fails=True;self.p.tree.selection_set(self.bid)
+        self.p.change.invoke()
         self.settle();self.assertIn('종료가 확인되지',self.p.status.get());self.assertFalse(self.p.completed)
     def test_browser_registration_stays_separate_from_active_workspace(self):
         self.verifier.browser_login=lambda **kw:credential('C')

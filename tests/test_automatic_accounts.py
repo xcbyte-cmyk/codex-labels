@@ -83,13 +83,12 @@ class HandoffTests(unittest.TestCase):
         self.log = []; self.verifier = FakeVerifier(self.log); self.desktop = FakeDesktop(self.log)
         self.h = Handoff(self.home, self.vault, self.verifier, self.desktop)
     def tearDown(self): self.temp.cleanup()
-    def switch(self): return self.h.switch(self.bid, consent=True, work_saved=True)
+    def switch(self): return self.h.switch(self.bid)
     def test_selection_performs_actual_file_handoff_and_relaunch(self):
         result = self.switch()
         self.assertTrue(result['changed']); self.assertFalse(result['desktopIdentityObserved'])
         self.assertEqual(Credential.parse(read_private(self.home / 'auth.json')).identity, self.b.identity)
-        self.assertLess(self.log.index('exit'), self.log.index('verify-active'))
-        self.assertLess(self.log.index('verify-active'), self.log.index('reopen'))
+        self.assertEqual(self.log, ['exit', 'reopen'])
         self.assertFalse(self.vault.journal.exists())
     def test_entire_history_config_and_workspace_path_unchanged(self):
         for i in range(600): (self.home / 'sessions' / f'{i}.jsonl').write_text(f'conversation {i}')
@@ -97,48 +96,43 @@ class HandoffTests(unittest.TestCase):
         self.switch()
         after = {p.relative_to(self.home): p.read_bytes() for p in self.home.rglob('*') if p.is_file() and p.name != 'auth.json'}
         self.assertEqual(before, after)
-    def test_refresh_tokens_written_back_to_selected_registry(self):
+    def test_selected_cache_is_applied_without_online_refresh(self):
         self.switch(); _, value = self.vault.get(self.bid)
-        self.assertEqual(value.raw, credential('B', 3).raw)
+        self.assertEqual(value.raw, self.b.raw)
+        self.assertEqual(read_private(self.home / 'auth.json'), self.b.raw)
     def test_latest_source_refresh_saved_after_exit(self):
         self.desktop.on_close = lambda: atomic_write(self.home / 'auth.json', credential('A', 5).raw)
         self.switch(); _, value = self.vault.get(self.aid)
         self.assertEqual(value.raw, credential('A', 5).raw)
-    def test_source_account_changed_during_shutdown_not_overwritten(self):
+    def test_source_account_changed_during_shutdown_is_saved_before_selection(self):
         self.desktop.on_close = lambda: atomic_write(self.home / 'auth.json', credential('C').raw)
-        with self.assertRaisesRegex(AccountError, 'AUTH_CHANGED_EXTERNALLY'): self.switch()
-        self.assertEqual(Credential.parse(read_private(self.home / 'auth.json')).identity, credential('C').identity)
-    def test_no_consent_no_actions(self):
-        with self.assertRaisesRegex(AccountError, 'CONSENT_REQUIRED'): self.h.switch(self.bid)
-        self.assertEqual(self.log, [])
-    def test_missing_saved_work_confirmation(self):
-        with self.assertRaisesRegex(AccountError, 'CONSENT_REQUIRED'): self.h.switch(self.bid, consent=True)
-    def test_other_app_never_stopped_or_modified(self):
+        self.switch()
+        self.assertEqual(read_private(self.home / 'auth.json'), self.b.raw)
+        self.assertTrue(any(c.identity == credential('C').identity for _, c in self.vault._snapshot()))
+    def test_switch_call_is_sufficient_without_consent_flags(self):
+        self.assertTrue(self.h.switch(self.bid)['changed'])
+    def test_other_app_does_not_block_switch(self):
         self.desktop.busy = True
-        with self.assertRaisesRegex(AccountError, 'OTHER_CODEX_RUNNING'): self.switch()
-        self.assertNotIn('exit', self.log); self.assertEqual(read_private(self.home / 'auth.json'), self.a.raw)
+        self.switch()
+        self.assertEqual(self.log, ['exit', 'reopen'])
     def test_failed_exit_no_auth_change(self):
         self.desktop.exit_fails = True
         with self.assertRaisesRegex(AccountError, 'EXIT_NOT_CONFIRMED'): self.switch()
         self.assertEqual(read_private(self.home / 'auth.json'), self.a.raw); self.assertFalse(self.vault.journal.exists())
-    def test_keyring_or_unknown_config_never_converted(self):
-        self.verifier.fail = 'store'
-        with self.assertRaisesRegex(AccountError, 'FILE_STORE_REQUIRED'): self.switch()
-        self.assertNotIn('exit', self.log); self.assertEqual(read_private(self.home / 'auth.json'), self.a.raw)
-    def test_target_auth_failure_before_exit(self):
-        self.verifier.fail = 'prepare'
-        with self.assertRaisesRegex(AccountError, 'LOGIN_REQUIRED'): self.switch()
-        self.assertNotIn('exit', self.log)
-    def test_target_verification_failure_rolls_back_no_model_replay(self):
-        self.verifier.fail = 'verify'
-        with self.assertRaisesRegex(AccountError, 'IDENTITY_MISMATCH'): self.switch()
+    def test_switch_does_not_call_online_verifier(self):
+        with patch.object(self.verifier, 'require_file_store', side_effect=AssertionError('unexpected RPC')), \
+                patch.object(self.verifier, 'prepared', side_effect=AssertionError('unexpected RPC')), \
+                patch.object(self.verifier, 'active', side_effect=AssertionError('unexpected RPC')):
+            self.switch()
+    def test_failed_auth_write_preserves_source(self):
+        real_write = atomic_write
+        def fail_selected(path, data):
+            if path == self.home / 'auth.json': raise OSError('synthetic write failure')
+            return real_write(path, data)
+        with patch('automatic_accounts.atomic_write', side_effect=fail_selected):
+            with self.assertRaisesRegex(AccountError, 'HANDOFF_FAILED'): self.switch()
         self.assertEqual(read_private(self.home / 'auth.json'), self.a.raw)
-        self.assertNotIn('reopen', self.log); self.assertFalse(self.vault.journal.exists())
-    def test_unrelated_new_login_not_overwritten_during_rollback(self):
-        self.verifier.fail = 'foreign'
-        with self.assertRaisesRegex(AccountError, 'RECOVERY_REQUIRED'): self.switch()
-        self.assertEqual(Credential.parse(read_private(self.home / 'auth.json')).identity, credential('C').identity)
-        self.assertTrue(self.vault.journal.exists())
+        self.assertNotIn('reopen', self.log)
     def test_crash_marker_blocks_another_switch(self):
         self.vault.begin(self.a, self.b)
         with self.assertRaisesRegex(AccountError, 'RECOVERY_REQUIRED'): self.switch()
@@ -146,20 +140,16 @@ class HandoffTests(unittest.TestCase):
         self.vault.begin(self.a, self.b); atomic_write(self.home / 'auth.json', self.b.raw)
         result = self.h.recover()
         self.assertEqual(result['state'], 'source-restored'); self.assertIn('reopen', self.log)
-    def test_cancel_after_preverification_preserves_source(self):
-        with self.assertRaisesRegex(AccountError, 'CANCELLED'):
-            self.h.switch(self.bid, consent=True, work_saved=True, cancelled=lambda: True)
-        self.assertNotIn('exit', self.log); self.assertEqual(read_private(self.home / 'auth.json'), self.a.raw)
     def test_relaunch_failure_does_not_undo_verified_account(self):
         self.desktop.launch_fails = True
         with self.assertRaisesRegex(AccountError, 'REOPEN_FAILED'): self.switch()
         self.assertEqual(Credential.parse(read_private(self.home / 'auth.json')).identity, self.b.identity)
     def test_same_account_does_not_logout(self):
-        self.assertFalse(self.h.switch(self.aid, consent=True, work_saved=True)['changed'])
+        self.assertFalse(self.h.switch(self.aid)['changed'])
         self.assertEqual(self.log, [])
     def test_unknown_profile_does_not_touch_current(self):
         with self.assertRaisesRegex(AccountError, 'PROFILE_NOT_FOUND'):
-            self.h.switch('f' * 32, consent=True, work_saved=True)
+            self.h.switch('f' * 32)
         self.assertEqual(self.log, [])
     def test_corrupt_vault_not_recreated_empty(self):
         self.vault.file.write_bytes(b'broken')

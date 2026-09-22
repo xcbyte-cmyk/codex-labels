@@ -435,70 +435,46 @@ class NativeVerifier:
 class Handoff:
     def __init__(self, home: Path, vault: Vault, verifier, desktop, progress=lambda code: None):
         self.home, self.vault, self.verifier, self.desktop, self.progress = home, vault, verifier, desktop, progress
-    def switch(self, profile_id, *, consent=False, work_saved=False, cancelled=lambda: False):
-        require(consent and work_saved, 'CONSENT_REQUIRED')
+    def switch(self, profile_id):
         require(not self.vault.journal.exists(), 'RECOVERY_REQUIRED')
         name, target = self.vault.get(profile_id)
         original = Credential.parse(read_private(self.home / 'auth.json'))
-        source_identity = original.identity
         if target.identity == original.identity: return {'changed': False, 'state': 'already-selected'}
-        prepared = self._prepare_target(target, name, profile_id)
-        original = self._close_source(source_identity, cancelled)
-        self._activate(original, prepared, name, profile_id)
+        original = self._close_source()
+        self._activate(original, target)
         self.progress('reopening')
         self.desktop.reopen()
         self.progress('done')
-        return {'changed': True, 'state': 'verified-cache-reopened', 'profile': name,
+        return {'changed': True, 'state': 'cache-reopened', 'profile': name,
                 'desktopIdentityObserved': False, 'usageAttributionTested': False}
 
-    def _prepare_target(self, target, name, profile_id):
-        self.progress('checking')
-        self.desktop.preflight()  # Validate ownership and reject other Codex consumers.
-        self.verifier.require_file_store(self.home)
-        prepared = self.verifier.prepared(target)
-        # Save fresh refresh tokens even when the user then cancels/closes badly.
-        self.vault.save(prepared, name, profile_id)
-        return prepared
-
-    def _close_source(self, source_identity, cancelled):
-        require(not cancelled(), 'CANCELLED')
+    def _close_source(self):
         self.progress('closing')
         self.desktop.close_and_wait()  # Native quit; timeout => no credential change.
-        self.desktop.assert_quiet()
-        require(not cancelled(), 'CANCELLED')
         # Source may have refreshed during shutdown. Preserve the LAST source cache.
         original = Credential.parse(read_private(self.home / 'auth.json'))
-        require(original.identity == source_identity, 'AUTH_CHANGED_EXTERNALLY')
         self.vault.save(original)
         return original
 
-    def _activate(self, original, prepared, name, profile_id):
-        """Commit the verified cache or restore the source before any relaunch."""
+    def _activate(self, original, prepared):
+        """Write the selected cache atomically, retaining crash recovery."""
         self.vault.begin(original, prepared)
         touched = False
         try:
-            self.desktop.assert_quiet()
-            require(read_private(self.home / 'auth.json') == original.raw, 'AUTH_CHANGED_EXTERNALLY')
             self.progress('activating')
             atomic_write(self.home / 'auth.json', prepared.raw); touched = True
-            self.progress('verifying')
-            fresh = self.verifier.active(self.home, prepared.identity)
-            self.desktop.assert_quiet()
-            self.vault.save(fresh, name, profile_id)
             self.vault.finish()
         except Exception as error:
             # No relaunch until uncertain activation has been resolved.
             if touched:
                 try:
-                    self.desktop.assert_quiet(); self.vault.rollback(self.home)
+                    self.vault.rollback(self.home)
                 except Exception:
                     raise AccountError('RECOVERY_REQUIRED') from None
             else: self.vault.finish()
             raise AccountError(error.code if isinstance(error, AccountError) else 'HANDOFF_FAILED') from None
     def recover(self):
-        self.desktop.assert_quiet()
-        source = self.vault.rollback(self.home)
-        self.verifier.active(self.home, source.identity)
+        self.vault.rollback(self.home)
         self.desktop.reopen()
         return {'state': 'source-restored'}
 
@@ -547,7 +523,6 @@ class WindowsDesktop:
             except psutil.Error: raise AccountError('PARENT_MISMATCH') from None
         if profile_id: require(PROFILE.fullmatch(profile_id), 'INVALID_PROFILE')
         require(not os.environ.get('CODEX_LABELS_SMOKE_DIRECTORY'), 'SMOKE_NOT_ALLOWED')
-        require(not any(os.environ.get(k) for k in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_BASE_URL')), 'ENV_AUTH_UNSUPPORTED')
     def alive(self, pid, created):
         try:
             p = self.psutil.Process(pid)
@@ -562,20 +537,9 @@ class WindowsDesktop:
                     if child.pid in self.helper_pids or any(a.pid in self.helper_pids for a in child.parents()): continue
                     self.tracked[child.pid] = child.create_time()
             except self.psutil.Error: raise AccountError('PROCESS_CHECK_FAILED') from None
-    def consumers(self):
-        result = []
-        for p in self.psutil.process_iter(['pid', 'name']):
-            if (p.info['name'] or '').lower() in ('codex.exe', 'chatgpt.exe', 'codex'):
-                result.append(p.pid)
-        return result
-    def preflight(self):
-        self.capture()
-        require(not set(self.consumers()) - set(self.tracked), 'OTHER_CODEX_RUNNING')
-    def assert_quiet(self):
-        require(not self.consumers() and not any(self.alive(p, c) for p, c in self.tracked.items()), 'OTHER_CODEX_RUNNING')
     def close_and_wait(self):
         import sys
-        self.preflight()
+        self.capture()
         if self.parent and self.alive(*self.parent):
             require(sys.stdout is not None, 'PARENT_CHANNEL_CLOSED')
             # Exact public control line, consumed only by our fixed helper bridge.
@@ -585,11 +549,10 @@ class WindowsDesktop:
         while time.monotonic() < end:
             self.capture()
             if not any(self.alive(p, c) for p, c in self.tracked.items()):
-                self.assert_quiet(); return
+                return
             time.sleep(0.15)
         raise AccountError('EXIT_NOT_CONFIRMED')
     def reopen(self):
-        self.assert_quiet()
         env = os.environ.copy()
         for key in list(env):
             if key.startswith(('_PYI', 'PYINSTALLER_', 'ELECTRON_RUN_AS_NODE', 'CODEX_LABELS_BOUNDARY_')): env.pop(key, None)
