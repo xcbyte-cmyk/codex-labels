@@ -1,5 +1,12 @@
 # One-click registered account switching
 
+The former account selector launcher and the in-app account button now open
+this same screen (issue #25). The launcher forwards an open-picker request to
+the owning Desktop so its original quit channel and workspace remain intact.
+The list marks the current cached account and imports credentials from existing
+account-window profiles without moving or deleting their conversation files.
+Account registration, renewal and removal are available in this single screen.
+
 Open **계정 전환**, select a saved account, and press **선택 계정으로 전환 및 재실행**.
 The button itself is explicit consent to use existing conversation/code context
 with the selected account. There are no consent checkboxes, force-mode options,

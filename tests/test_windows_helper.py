@@ -13,6 +13,11 @@ from package_windows import PAYLOAD
 
 
 class WindowsHelperTests(unittest.TestCase):
+    def test_legacy_account_entry_opens_unified_desktop_picker(self):
+        with patch.object(helper, 'launch', return_value={'status': 'active'}) as launch:
+            self.assertEqual(helper.open_accounts(self.root), 0)
+        launch.assert_called_once_with(self.root, wait_ready=True, skip_update=True, open_account_picker=True)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='labels-helper-')
         self.addCleanup(temporary.cleanup)

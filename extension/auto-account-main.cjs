@@ -5,7 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 function install({app, ipcMain, check, root, home, profile, profileId = null, enabled = true,
-  spawnProcess = childProcess.spawn, platform = process.platform, local = process.env.LOCALAPPDATA}) {
+  spawnProcess = childProcess.spawn, platform = process.platform, local = process.env.LOCALAPPDATA,
+  argv = process.argv}) {
   let running = null;
   function start(recovery = false) {
     if (!enabled || platform !== 'win32' || !local) throw Error('Windows 계정 전환기 실행 조건을 확인하세요.');
@@ -49,6 +50,12 @@ function install({app, ipcMain, check, root, home, profile, profileId = null, en
     if (fs.existsSync(pending)) { start(true); app.exit(0); return {recoveryRequired: true}; }
   }
   ipcMain.handle('codex-labels:auto-accounts-open', event => { check(event); return start(false); });
+  if (enabled && platform === 'win32') {
+    const openRequested = args => Array.isArray(args) && args.includes('--codex-labels-open-accounts');
+    const open = () => { try { start(false); } catch (error) { console.error('Account picker launch failed:', error.message); } };
+    if (openRequested(argv)) app.once('ready', open);
+    app.on('second-instance', (_event, args) => { if (openRequested(args)) open(); });
+  }
   return {recoveryRequired: false};
 }
 module.exports = {install};

@@ -65,9 +65,10 @@ class Picker:
         outer = ttk.Frame(ui, padding=18); outer.pack(fill='both', expand=True)
         ttk.Label(outer, text='저장된 계정으로 자동 전환', font=('Malgun Gothic', 16, 'bold')).pack(anchor='w')
         ttk.Label(outer, text='계정을 선택하고 전환을 누르면 같은 작업 공간으로 다시 실행합니다.\n전환 버튼을 누르면 선택한 계정으로 기존 대화·코드 문맥을 사용하는 데 동의한 것으로 처리합니다.', wraplength=590).pack(anchor='w', pady=(8, 14))
-        self.tree = ttk.Treeview(outer, columns=('name', 'email'), show='headings', height=7, selectmode='browse')
+        self.tree = ttk.Treeview(outer, columns=('name', 'email', 'status'), show='headings', height=7, selectmode='browse')
         self.tree.heading('name', text='이름'); self.tree.heading('email', text='저장 로그인')
-        self.tree.column('name', width=180); self.tree.column('email', width=360); self.tree.pack(fill='both', expand=True)
+        self.tree.heading('status', text='상태'); self.tree.column('status', width=80)
+        self.tree.column('name', width=160); self.tree.column('email', width=300); self.tree.pack(fill='both', expand=True)
         buttons = ttk.Frame(outer); buttons.pack(fill='x', pady=8)
         self.add = ttk.Button(buttons, text='계정 추가 · 브라우저 로그인', command=self.add_account); self.add.pack(side='left')
         self.renew = ttk.Button(buttons, text='선택 계정 로그인 갱신', command=self.renew_account); self.renew.pack(side='left', padx=8)
@@ -106,7 +107,9 @@ class Picker:
     def refresh(self):
         selected = self.tree.selection()
         for row in self.tree.get_children(): self.tree.delete(row)
-        for e in self.vault.list(): self.tree.insert('', 'end', iid=e['id'], values=(e['name'], e['email']))
+        for e in self.vault.list():
+            current = e['id'] == getattr(self, 'current_id', None)
+            self.tree.insert('', 'end', iid=e['id'], values=(e['name'], e['email'], '현재 계정' if current else ''))
         target = selected[0] if selected else getattr(self, 'current_id', None)
         if target and self.tree.exists(target): self.tree.selection_set(target)
     def controls(self):

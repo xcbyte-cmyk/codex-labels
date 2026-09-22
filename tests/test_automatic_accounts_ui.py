@@ -38,6 +38,20 @@ class PickerTests(unittest.TestCase):
         self.assertFalse(self.p.busy)
     def test_current_account_is_pre_registered(self):
         self.assertEqual(len(self.vault.list()),2);self.assertTrue(self.p.tree.selection())
+        self.assertEqual(self.p.tree.item(self.p.current_id, 'values')[2], '현재 계정')
+        self.assertEqual(self.p.tree.item(self.bid, 'values')[2], '')
+    def test_legacy_registered_account_is_imported_without_moving_history(self):
+        import json
+        base = Path(os.environ['LOCALAPPDATA']) / 'CodexLabels' / 'AccountWindows' / 'accounts' / ('c' * 32)
+        (base / 'codex-home').mkdir(parents=True)
+        (base / 'account.json').write_text(json.dumps({'id': base.name, 'name': '기존 계정 C'}))
+        (base / 'codex-home' / 'auth.json').write_bytes(credential('C').raw)
+        history = base / 'codex-home' / 'history.jsonl'
+        history.write_text('synthetic history')
+        self.p.register_existing(); self.p.refresh()
+        self.assertEqual(len(self.vault.list()), 3)
+        self.assertEqual(history.read_text(), 'synthetic history')
+        self.assertEqual(read_private(self.home / 'auth.json'), credential('A').raw)
     def test_switch_button_automates_file_verification_and_relaunch(self):
         self.p.tree.selection_set(self.bid)
         with patch('automatic_accounts_ui.messagebox.askyesno',side_effect=AssertionError('extra confirmation')):self.p.change.invoke()

@@ -4,7 +4,7 @@
   if (!api?.openAutomaticAccounts || document.getElementById('cdx-auto-account-open')) return;
   const button = document.createElement('button');
   button.id = 'cdx-auto-account-open'; button.type = 'button'; button.textContent = '계정 전환';
-  button.title = '등록 계정 선택 → 정상 종료 → 인증 확인 → 같은 작업 공간 재실행';
+  button.title = '계정 추가·관리 및 같은 작업 공간에서 계정 전환';
   button.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:2147483600;padding:8px 14px;border:1px solid #64748b;border-radius:8px;background:#172033;color:#eef2ff;font:13px system-ui;cursor:pointer';
   const status = document.createElement('span'); status.setAttribute('role', 'status');
   status.style.cssText = 'position:fixed;bottom:54px;right:14px;z-index:2147483600;max-width:330px;background:#172033;color:#eef2ff;font:12px system-ui;padding:5px';

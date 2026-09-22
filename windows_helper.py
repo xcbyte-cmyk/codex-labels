@@ -467,7 +467,7 @@ def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=F
         return status
 
 
-def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False, select_accounts=False):
+def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False, select_accounts=False, open_account_picker=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     progress('설치 상태를 확인하고 있습니다', 5)
@@ -506,7 +506,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     if shortcut:
         create_shortcut(root)
     if select_accounts:
-        progress('계정 선택기를 준비했습니다', 100)
+        progress('계정 전환을 준비했습니다', 100)
         return {'selectorReady': True, 'updateError': update_error}
     existing = running_apps()
     if any(app != exe.resolve() for app in existing):
@@ -527,7 +527,8 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     if wait_ready and not skip_update:
         recovery.attempted(root)
     try:
-        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
+        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN'],
+            *(['--codex-labels-open-accounts'] if open_account_picker else [])], cwd=exe.parent,
             env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except OSError as error:
         saved = recovery.state(root)
@@ -558,13 +559,10 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
 
 
 def open_accounts(root):
-    import account_manager
-    data_root = account_profiles.shared_root()
-    return account_manager.run(data_root,
-        lambda _, key, **kw: launch_account(root, key, shared=True, **kw),
-        lambda _, key, **kw: delete_account(root, key, shared=True, **kw),
-        launch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, **kw),
-        close_on_launch=True)
+    # Let the owning Desktop open the same picker used by its in-app button.
+    # This preserves its quit channel and home/profile when already running.
+    launch(root, wait_ready=True, skip_update=True, open_account_picker=True)
+    return 0
 
 
 def main():
