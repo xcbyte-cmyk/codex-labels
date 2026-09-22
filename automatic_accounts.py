@@ -216,31 +216,41 @@ class Vault:
         raw = json.dumps(data, ensure_ascii=False).encode()
         require(len(raw) <= MAX_VAULT, 'VAULT_FULL')
         atomic_write(file, self.protector.seal(raw))
-    def entries(self):
+    def _snapshot(self):
+        """Read and validate once per operation; never cache refreshed credentials."""
         if not self.file.exists(): return []
         v = self._load(self.file)
         require(v.get('version') == 1 and isinstance(v.get('accounts'), list) and len(v['accounts']) <= 64, 'VAULT_UNAVAILABLE')
         ids = set()
+        snapshot = []
         for e in v['accounts']:
             require(isinstance(e, dict) and PROFILE.fullmatch(e.get('id', '')) and e['id'] not in ids, 'VAULT_UNAVAILABLE')
             ids.add(e['id'])
             require(isinstance(e.get('name'), str) and 0 < len(e['name']) <= 80, 'VAULT_UNAVAILABLE')
-            Credential.parse(e['auth'].encode())
-        return v['accounts']
+            snapshot.append((e, Credential.parse(e['auth'].encode())))
+        return snapshot
+    def entries(self):
+        return [entry for entry, _ in self._snapshot()]
+    @staticmethod
+    def _find(snapshot, profile_id):
+        for entry, credential in snapshot:
+            if entry['id'] == profile_id:
+                return entry, credential
+        raise AccountError('PROFILE_NOT_FOUND')
     def list(self):
-        return [{'id': e['id'], 'name': e['name'], **Credential.parse(e['auth'].encode()).public()} for e in self.entries()]
+        return [{'id': e['id'], 'name': e['name'], **c.public()} for e, c in self._snapshot()]
     def get(self, profile_id):
         require(isinstance(profile_id, str) and PROFILE.fullmatch(profile_id), 'INVALID_PROFILE')
-        for e in self.entries():
-            if e['id'] == profile_id: return e['name'], Credential.parse(e['auth'].encode())
-        raise AccountError('PROFILE_NOT_FOUND')
+        entry, credential = self._find(self._snapshot(), profile_id)
+        return entry['name'], credential
     def save(self, c: Credential, name='', profile_id=None, overwrite=True):
-        entries = self.entries()
-        old = next((e for e in entries if Credential.parse(e['auth'].encode()).identity == c.identity), None)
+        snapshot = self._snapshot()
+        entries = [entry for entry, _ in snapshot]
+        old = next((e for e, credential in snapshot if credential.identity == c.identity), None)
         if profile_id:
-            target = next((e for e in entries if e['id'] == profile_id), None)
-            require(target is not None and Credential.parse(target['auth'].encode()).identity == c.identity, 'IDENTITY_MISMATCH')
-            old = target
+            target = next(((e, credential) for e, credential in snapshot if e['id'] == profile_id), None)
+            require(target is not None and target[1].identity == c.identity, 'IDENTITY_MISMATCH')
+            old = target[0]
         if old and not overwrite: return old['id']
         label = name.strip() or (old['name'] if old else c.email or '계정 ' + c.identity[0][-6:])
         require(0 < len(label) <= 80 and not any(ord(ch) < 32 for ch in label), 'INVALID_NAME')
@@ -250,8 +260,10 @@ class Vault:
         self._save(self.file, {'version': 1, 'accounts': entries})
         return entry['id']
     def remove(self, profile_id):
-        self.get(profile_id)
-        self._save(self.file, {'version': 1, 'accounts': [e for e in self.entries() if e['id'] != profile_id]})
+        require(isinstance(profile_id, str) and PROFILE.fullmatch(profile_id), 'INVALID_PROFILE')
+        snapshot = self._snapshot()
+        self._find(snapshot, profile_id)
+        self._save(self.file, {'version': 1, 'accounts': [e for e, _ in snapshot if e['id'] != profile_id]})
     def begin(self, source: Credential, target: Credential):
         require(not self.journal.exists(), 'RECOVERY_REQUIRED')
         self._save(self.journal, {'version': 1, 'source': source.raw.decode(), 'targetIdentity': list(target.identity)})
@@ -430,12 +442,25 @@ class Handoff:
         original = Credential.parse(read_private(self.home / 'auth.json'))
         source_identity = original.identity
         if target.identity == original.identity: return {'changed': False, 'state': 'already-selected'}
+        prepared = self._prepare_target(target, name, profile_id)
+        original = self._close_source(source_identity, cancelled)
+        self._activate(original, prepared, name, profile_id)
+        self.progress('reopening')
+        self.desktop.reopen()
+        self.progress('done')
+        return {'changed': True, 'state': 'verified-cache-reopened', 'profile': name,
+                'desktopIdentityObserved': False, 'usageAttributionTested': False}
+
+    def _prepare_target(self, target, name, profile_id):
         self.progress('checking')
         self.desktop.preflight()  # Validate ownership and reject other Codex consumers.
         self.verifier.require_file_store(self.home)
         prepared = self.verifier.prepared(target)
         # Save fresh refresh tokens even when the user then cancels/closes badly.
         self.vault.save(prepared, name, profile_id)
+        return prepared
+
+    def _close_source(self, source_identity, cancelled):
         require(not cancelled(), 'CANCELLED')
         self.progress('closing')
         self.desktop.close_and_wait()  # Native quit; timeout => no credential change.
@@ -445,6 +470,10 @@ class Handoff:
         original = Credential.parse(read_private(self.home / 'auth.json'))
         require(original.identity == source_identity, 'AUTH_CHANGED_EXTERNALLY')
         self.vault.save(original)
+        return original
+
+    def _activate(self, original, prepared, name, profile_id):
+        """Commit the verified cache or restore the source before any relaunch."""
         self.vault.begin(original, prepared)
         touched = False
         try:
@@ -466,11 +495,6 @@ class Handoff:
                     raise AccountError('RECOVERY_REQUIRED') from None
             else: self.vault.finish()
             raise AccountError(error.code if isinstance(error, AccountError) else 'HANDOFF_FAILED') from None
-        self.progress('reopening')
-        self.desktop.reopen()
-        self.progress('done')
-        return {'changed': True, 'state': 'verified-cache-reopened', 'profile': name,
-                'desktopIdentityObserved': False, 'usageAttributionTested': False}
     def recover(self):
         self.desktop.assert_quiet()
         source = self.vault.rollback(self.home)

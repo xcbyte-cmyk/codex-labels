@@ -168,6 +168,30 @@ class HandoffTests(unittest.TestCase):
     def test_vault_only_exposes_display_metadata(self):
         public = json.dumps(self.vault.list())
         for secret in ('refresh_token', 'access_token', 'SYNTHETIC', 'fixture.'): self.assertNotIn(secret, public)
+    def test_vault_operations_read_once_and_parse_each_account_once(self):
+        for operation in (
+            self.vault.list,
+            lambda: self.vault.get(self.bid),
+            lambda: self.vault.save(self.b, profile_id=self.bid),
+            lambda: self.vault.remove(self.bid),
+        ):
+            with self.subTest(operation=operation), \
+                    patch.object(self.vault.protector, 'open', wraps=self.vault.protector.open) as decrypt, \
+                    patch.object(Credential, 'parse', wraps=Credential.parse) as parse:
+                operation()
+                self.assertEqual(decrypt.call_count, 1)
+                self.assertEqual(parse.call_count, 2)
+    def test_vault_reads_external_refresh_in_next_operation(self):
+        self.vault.get(self.bid)
+        other = Vault(self.vault.directory, TestProtector())
+        fresh = credential('B', 12)
+        other.save(fresh, profile_id=self.bid)
+        self.assertEqual(self.vault.get(self.bid)[1].raw, fresh.raw)
+    def test_missing_delete_preserves_registry(self):
+        original = self.vault.file.read_bytes()
+        with self.assertRaisesRegex(AccountError, 'PROFILE_NOT_FOUND'):
+            self.vault.remove('f' * 32)
+        self.assertEqual(self.vault.file.read_bytes(), original)
     def test_dedup_import_never_overwrites_fresher_token(self):
         self.vault.save(credential('B', 9), profile_id=self.bid)
         self.vault.save(self.b, overwrite=False)
