@@ -430,7 +430,9 @@
   async function read(){
     if(disposed)return;
     readPending=true;
-    if(reading||writing||document.hidden)return;
+    // Prime the first local snapshot before a hidden startup window is shown.
+    // Subsequent background refreshes still wait for visibility.
+    if(reading||writing||(document.hidden&&snapshot))return;
     readPending=false;reading=true;const epoch=readEpoch;
     try{
       const next=await fetchSnapshot(snapshot?.snapshotVersion);
