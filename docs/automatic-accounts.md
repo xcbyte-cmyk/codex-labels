@@ -1,11 +1,19 @@
 # One-click registered account switching
 
-The former account selector launcher and the in-app account button now open
-this same screen (issue #25). The launcher forwards an open-picker request to
-the owning Desktop so its original quit channel and workspace remain intact.
+The launcher retains the execution-environment manager (issue #25): create,
+open and delete independent environments, view their cached linked accounts,
+or choose **연결 계정 전환** for a selected environment. A separate action switches
+the default environment. Switching forwards a request to the selected Desktop
+and uses the same account picker as its in-app button. The environment retains
+its own CODEX_HOME, Electron profile, conversations, settings and labels.
+Deleting an account registration in the picker does not delete the environment;
+deleting an environment remains a separate, confirmed destructive action.
+New environments without auth.json can select their first saved account.
+Shared environments keep their account-protocol argument across restarts.
+
 The list marks the current cached account and imports credentials from existing
-account-window profiles without moving or deleting their conversation files.
-Account registration, renewal and removal are available in this single screen.
+account-window profiles without moving their conversation files. Account
+registration, renewal and removal are available in the per-environment picker.
 
 Open **계정 전환**, select a saved account, and press **선택 계정으로 전환 및 재실행**.
 The button itself is explicit consent to use existing conversation/code context

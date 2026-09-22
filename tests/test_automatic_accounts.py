@@ -147,6 +147,17 @@ class HandoffTests(unittest.TestCase):
     def test_same_account_does_not_logout(self):
         self.assertFalse(self.h.switch(self.aid)['changed'])
         self.assertEqual(self.log, [])
+    def test_new_environment_can_select_its_first_account(self):
+        (self.home / 'auth.json').unlink()
+        self.switch()
+        self.assertEqual(read_private(self.home / 'auth.json'), self.b.raw)
+        self.assertEqual(self.log, ['exit', 'reopen'])
+    def test_first_account_recovery_restores_logged_out_environment(self):
+        self.vault.begin(None, self.b)
+        atomic_write(self.home / 'auth.json', self.b.raw)
+        self.h.recover()
+        self.assertFalse((self.home / 'auth.json').exists())
+        self.assertIn('reopen', self.log)
     def test_unknown_profile_does_not_touch_current(self):
         with self.assertRaisesRegex(AccountError, 'PROFILE_NOT_FOUND'):
             self.h.switch('f' * 32)
@@ -200,6 +211,23 @@ class HandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(AccountError, 'WINDOWS_REQUIRED'): DPAPI().seal(b'test')
 
 class BoundaryTests(unittest.TestCase):
+    def test_shared_environment_restart_preserves_account_protocol_and_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            desktop = object.__new__(WindowsDesktop)
+            desktop.root = base / 'installation'
+            desktop.exe = desktop.root / 'runtime' / 'app' / 'ChatGPT.exe'
+            desktop.profile_id = 'a' * 32
+            folder = base / 'CodexLabels' / 'AccountWindows' / 'accounts' / desktop.profile_id
+            desktop.home, desktop.profile = folder / 'codex-home', folder / 'user-data'
+            with patch.dict(os.environ, {'LOCALAPPDATA': str(base)}), \
+                    patch('automatic_accounts.time.sleep'), \
+                    patch('automatic_accounts.subprocess.Popen') as launch:
+                launch.return_value.poll.return_value = None
+                desktop.reopen()
+            self.assertIn('--codex-labels-account-protocol=1', launch.call_args.args[0])
+            self.assertEqual(launch.call_args.kwargs['env']['CODEX_HOME'], str(desktop.home))
+            self.assertEqual(launch.call_args.kwargs['env']['CODEX_ELECTRON_USER_DATA_PATH'], str(desktop.profile))
     def test_environment_drops_other_account_routing(self):
         e = clean_environment({'PATH': 'x', 'CODEX_HOME': 'old', 'OPENAI_API_KEY': 'secret', 'CODEX_API_KEY': 'secret',
             'ELECTRON_RUN_AS_NODE': '1', '_PYI_HOME': 'x', 'NODE_OPTIONS': 'bad', 'SSL_CERT_FILE': 'ca'}, Path('/new'))

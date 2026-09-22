@@ -64,7 +64,7 @@ test('account onboarding reports UI readiness without pretending login succeeded
   contents.executeJavaScript = async script => { assert.ok(script.includes('codex-labels-account-name')); };
   const window = new EventEmitter(); Object.assign(window, {webContents:contents, isDestroyed:()=>false, setTitle:value=>{title=value;}});
   h.windows.push(window);
-  h.app.emit('web-contents-created', {}, contents); contents.emit('did-finish-load');
+  h.app.emit('web-contents-created', {}, contents); contents.emit('dom-ready');
   await new Promise(resolve => setTimeout(resolve, 130));
   assert.equal(title, 'Codex Labels · 회사 A');
   const report = h.writes.map(w => {try{return JSON.parse(w.value);}catch{return null;}}).find(v => v?.accountWindowReady);
@@ -135,7 +135,7 @@ test('notification capture source is injected before legacy stopImmediatePropaga
   const h = mainHarness(t), event = h.event(); let source;
   event.sender.executeJavaScript = async value => { source = value; };
   h.app.emit('web-contents-created', {}, event.sender);
-  event.sender.emit('did-finish-load');
+  event.sender.emit('dom-ready');
   assert.equal(source, '/* notification */\n/* vocabulary */\n/* auto accounts */\n/* labels */');
 });
 test('preload subscriptions hide the native event and return an unsubscribe function', () => {

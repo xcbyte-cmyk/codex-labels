@@ -14,9 +14,14 @@ from package_windows import PAYLOAD
 
 class WindowsHelperTests(unittest.TestCase):
     def test_legacy_account_entry_opens_unified_desktop_picker(self):
-        with patch.object(helper, 'launch', return_value={'status': 'active'}) as launch:
+        import account_manager
+        with patch.object(helper.account_profiles, 'shared_root', return_value=self.base/'shared'), \
+                patch.object(account_manager, 'run', return_value=0) as manager, \
+                patch.object(helper, 'launch_account', return_value={'status': 'active'}) as launch:
             self.assertEqual(helper.open_accounts(self.root), 0)
-        launch.assert_called_once_with(self.root, wait_ready=True, skip_update=True, open_account_picker=True)
+            options = manager.call_args.kwargs
+            options['switch_account'](self.base/'shared', 'a'*32)
+        launch.assert_called_once_with(self.root, 'a'*32, shared=True, open_account_picker=True)
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='labels-helper-')

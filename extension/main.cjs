@@ -171,7 +171,8 @@ app.on('web-contents-created', (_event, contents) => {
     if (mainFrame && !inPlace) notifications.disconnected(contents);
   });
   contents.once('destroyed', () => notifications.disconnected(contents));
-  contents.on('did-finish-load', () => {
+  // Install as soon as the DOM is usable, before slow page resources finish.
+  contents.on('dom-ready', () => {
     if (!trustedContent(contents)) return;
     const window = BrowserWindow.fromWebContents(contents);
     if (window && !window.isDestroyed()) {

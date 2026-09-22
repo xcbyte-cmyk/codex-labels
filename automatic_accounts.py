@@ -264,17 +264,20 @@ class Vault:
         snapshot = self._snapshot()
         self._find(snapshot, profile_id)
         self._save(self.file, {'version': 1, 'accounts': [e for e, _ in snapshot if e['id'] != profile_id]})
-    def begin(self, source: Credential, target: Credential):
+    def begin(self, source: Credential | None, target: Credential):
         require(not self.journal.exists(), 'RECOVERY_REQUIRED')
-        self._save(self.journal, {'version': 1, 'source': source.raw.decode(), 'targetIdentity': list(target.identity)})
+        self._save(self.journal, {'version': 1, 'source': source.raw.decode() if source else None, 'targetIdentity': list(target.identity)})
     def rollback(self, home: Path):
         v = self._load(self.journal)
         require(v.get('version') == 1, 'RECOVERY_REQUIRED')
-        old = Credential.parse(v['source'].encode())
+        old = Credential.parse(v['source'].encode()) if v['source'] is not None else None
         current = Credential.parse(read_private(home / 'auth.json'))
         # No overwriting a third-party account that appeared during handoff.
-        require(current.identity in (old.identity, tuple(v['targetIdentity'])), 'AUTH_CHANGED_EXTERNALLY')
-        atomic_write(home / 'auth.json', old.raw)
+        require(current.identity in (old.identity if old else None, tuple(v['targetIdentity'])), 'AUTH_CHANGED_EXTERNALLY')
+        if old:
+            atomic_write(home / 'auth.json', old.raw)
+        else:
+            (home / 'auth.json').unlink()
         self.finish()
         return old
     def finish(self): self.journal.unlink(missing_ok=True)
@@ -438,8 +441,8 @@ class Handoff:
     def switch(self, profile_id):
         require(not self.vault.journal.exists(), 'RECOVERY_REQUIRED')
         name, target = self.vault.get(profile_id)
-        original = Credential.parse(read_private(self.home / 'auth.json'))
-        if target.identity == original.identity: return {'changed': False, 'state': 'already-selected'}
+        original = self._current()
+        if original and target.identity == original.identity: return {'changed': False, 'state': 'already-selected'}
         original = self._close_source()
         self._activate(original, target)
         self.progress('reopening')
@@ -448,12 +451,17 @@ class Handoff:
         return {'changed': True, 'state': 'cache-reopened', 'profile': name,
                 'desktopIdentityObserved': False, 'usageAttributionTested': False}
 
+    def _current(self):
+        auth = self.home / 'auth.json'
+        return Credential.parse(read_private(auth)) if auth.exists() else None
+
     def _close_source(self):
         self.progress('closing')
         self.desktop.close_and_wait()  # Native quit; timeout => no credential change.
         # Source may have refreshed during shutdown. Preserve the LAST source cache.
-        original = Credential.parse(read_private(self.home / 'auth.json'))
-        self.vault.save(original)
+        original = self._current()
+        if original:
+            self.vault.save(original)
         return original
 
     def _activate(self, original, prepared):
@@ -560,7 +568,11 @@ class WindowsDesktop:
         env['CODEX_HOME'] = str(self.home); env['CODEX_ELECTRON_USER_DATA_PATH'] = str(self.profile)
         env['CODEX_LABELS_LAUNCH_TOKEN'] = uuid.uuid4().hex
         args = [str(self.exe), '--user-data-dir=' + str(self.profile)]
-        if self.profile_id: args.append('--codex-labels-account=' + self.profile_id)
+        if self.profile_id:
+            args.append('--codex-labels-account=' + self.profile_id)
+            shared = Path(os.environ.get('LOCALAPPDATA', '')) / 'CodexLabels' / 'AccountWindows' / 'accounts'
+            if self.home.parent.parent == shared.resolve():
+                args.append('--codex-labels-account-protocol=1')
         child = subprocess.Popen(args, cwd=self.root, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.7)

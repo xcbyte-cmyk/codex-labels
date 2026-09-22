@@ -432,7 +432,7 @@ def delete_account(root, account_id, *, progress=None, shared=False):
             stop=lambda data, key: account_cleanup.stop_account(data, key, runtime_root=root))
 
 
-def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=False):
+def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=False, open_account_picker=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     # Account windows never silently fall back to the default launcher or an
@@ -453,6 +453,7 @@ def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=F
         process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile),
             '--codex-labels-account=' + account_id,
             *(['--codex-labels-account-protocol=1'] if shared else []),
+            *(['--codex-labels-open-accounts'] if open_account_picker else []),
             '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
             env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
@@ -559,10 +560,23 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
 
 
 def open_accounts(root):
-    # Let the owning Desktop open the same picker used by its in-app button.
-    # This preserves its quit channel and home/profile when already running.
-    launch(root, wait_ready=True, skip_update=True, open_account_picker=True)
-    return 0
+    import account_manager
+    from automatic_accounts import AccountError, Credential, read_private
+    data_root = account_profiles.shared_root()
+    def describe(key):
+        try:
+            auth = account_profiles.account_path(data_root, key)/'codex-home'/'auth.json'
+            credential = Credential.parse(read_private(auth))
+            return credential.email or credential.public()['accountSuffix']
+        except (AccountError, OSError, ValueError):
+            return '로그인 필요'
+    return account_manager.run(data_root,
+        lambda _, key, **kw: launch_account(root, key, shared=True, **kw),
+        lambda _, key, **kw: delete_account(root, key, shared=True, **kw),
+        launch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, **kw),
+        switch_account=lambda _, key, **kw: launch_account(root, key, shared=True, open_account_picker=True, **kw),
+        switch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, open_account_picker=True, **kw),
+        describe_account=describe, close_on_launch=True)
 
 
 def main():
