@@ -1,4 +1,5 @@
 """Synthetic per-PC installation, rollback and launch contract tests."""
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -8,6 +9,7 @@ from unittest.mock import patch, Mock
 
 from test_prepare_runtime import builder, write_archive
 import windows_helper as helper
+from package_windows import PAYLOAD
 
 
 class WindowsHelperTests(unittest.TestCase):
@@ -28,6 +30,14 @@ class WindowsHelperTests(unittest.TestCase):
     def test_discovery_uses_registered_installation_on_nondefault_drive_path(self):
         with patch.object(helper, 'installed_sources', return_value=[self.source]):
             self.assertEqual(helper.find_source(), self.source.resolve())
+
+    def test_payload_fingerprint_matches_packaged_files_only(self):
+        digest = hashlib.sha256()
+        for name in PAYLOAD:
+            source = helper.ASSETS/name
+            digest.update(source.name.encode())
+            digest.update(source.read_bytes())
+        self.assertEqual(helper.payload_fingerprint(), digest.hexdigest())
 
     def test_unsupported_source_does_not_create_output(self):
         write_archive(self.source/'resources/app.asar', {'package.json': b'{"version":"new-version"}'})

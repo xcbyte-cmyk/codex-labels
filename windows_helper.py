@@ -105,9 +105,11 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/name for name in ('prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'labels.example.json')]
-    files += sorted((ASSETS/'extension').glob('*.js'))
-    files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
+    files = [ASSETS/name for name in ('labels.example.json', 'prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'automatic_accounts.py', 'automatic_accounts_ui.py')]
+    # Match package_windows.PAYLOAD exactly. Development-only legacy modules
+    # must not change the installed helper's runtime fingerprint.
+    files += [ASSETS/'extension'/name for name in
+              ('main.cjs', 'preload.js', 'store.cjs', 'renderer.js', *builder.EXTRA_EXTENSION_FILES)]
     for file in files:
         digest.update(file.name.encode()); digest.update(file.read_bytes())
     return digest.hexdigest()
@@ -566,6 +568,9 @@ def open_accounts(root):
 
 
 def main():
+    if sys.argv[1:2] == ['auto-accounts']:
+        from automatic_accounts import main as accounts_main
+        return accounts_main(sys.argv[2:])
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')

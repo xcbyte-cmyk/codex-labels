@@ -23,7 +23,7 @@ function mainHarness(t, account = null) {
   };
   const writes = [];
   const mockFs = {mkdirSync() {}, writeFileSync: (file, value) => writes.push({file, value}), renameSync() {}, unlinkSync() {},
-    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : file.endsWith('session-switcher-renderer.js') ? '/* workspace switcher */' : '/* labels */'};
+    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : file.endsWith('auto-account-renderer.js') ? '/* auto accounts */' : '/* labels */'};
   const dirname = path.resolve('fixture', '.vite', 'build');
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {
     __dirname: dirname, process: {platform: 'win32', env: {LOCALAPPDATA: path.resolve('fixture', 'Local')},
@@ -33,7 +33,7 @@ function mainHarness(t, account = null) {
       if (name === 'electron') return {app, ipcMain: {handle: (channel, fn) => handlers.set(channel, fn)},
         shell: {openPath: async () => ''}, BrowserWindow: {getAllWindows: () => windows, fromWebContents: content => windows.find(w => w.webContents === content)}, Notification: {}};
       if (name === 'node:fs') return mockFs;
-      if (name === './codex-labels/session-switcher/index.cjs') return {install: options => { switcherOptions = options; return {dispose(){}}; }};
+      if (name === './codex-labels/auto-account-main.cjs') return {install: options => { switcherOptions = options; return {dispose(){}}; }};
       if (name === './codex-labels-store.cjs') return {createStore: () => store};
       if (name === './codex-labels/vocabulary-ipc.cjs') return {registerVocabulary: () => ({dispose(){}})};
       if (name === './codex-labels/snapshot-cache.cjs') return {createSnapshotCache: (value, directory, options) => {
@@ -136,7 +136,7 @@ test('notification capture source is injected before legacy stopImmediatePropaga
   event.sender.executeJavaScript = async value => { source = value; };
   h.app.emit('web-contents-created', {}, event.sender);
   event.sender.emit('did-finish-load');
-  assert.equal(source, '/* notification */\n/* vocabulary */\n/* workspace switcher */\n/* labels */');
+  assert.equal(source, '/* notification */\n/* vocabulary */\n/* auto accounts */\n/* labels */');
 });
 test('preload subscriptions hide the native event and return an unsubscribe function', () => {
   let removed; const exposed = new Map();
@@ -147,7 +147,7 @@ test('preload subscriptions hide the native event and return an unsubscribe func
         removeListener: (channel, fn) => { removed = fn; if (listeners.get(channel) === fn) listeners.delete(channel); }}})
   });
   const api = exposed.get('codexLabels');
-  assert.ok(exposed.get('codexSessionSwitcher'));
+  assert.equal(exposed.has('codexSessionSwitcher'), false);
   let args; const unsubscribe = api.onActivateThread((...values) => { args = values; });
   const listener = listeners.get('codex-labels:activate-thread');
   const value = {threadId: 't'}; listener({sender: 'must not leak'}, value);
@@ -163,31 +163,29 @@ test('preload subscriptions hide the native event and return an unsubscribe func
   assert.equal(api.ipcRenderer, undefined);
 });
 
-test('workspace switcher is wired to the trusted main-process boundary', t => {
-  const h = mainHarness(t), options = h.switcherOptions;
-  assert.equal(options.enabled, true);
-  assert.equal(options.currentProfileId, null);
-  assert.equal(options.executable, path.resolve('fixture', 'resources', 'codex.exe'));
-  assert.equal(options.storageDirectory, path.resolve('fixture', 'config', 'session-switches'));
-  assert.equal(typeof options.check, 'function');
-  assert.throws(() => options.check(h.event('https://example.com')), /접근할 수 없는/);
-  options.check(h.event());
+test('automatic accounts uses a fixed launcher without an account proxy', t => {
+  const h = mainHarness(t);
+  assert.equal(h.switcherOptions.enabled, true);
+  assert.equal(h.switcherOptions.root, path.resolve('fixture', 'config'));
+  assert.equal(typeof h.switcherOptions.check, 'function');
+  assert.equal([...h.handlers.keys()].some(name => name.includes('session-switcher')), false);
+  assert.equal(h.app.listenerCount('before-quit'), 0);
 });
 
-test('workspace preload sends only fixed operations and never exposes native events', () => {
-  const exposed = new Map(), listeners = new Map(), invokes = [];
+test('the preload contains only the original Labels bridge, no authentication API', () => {
+  const exposed = new Map(), invoked = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8'), {
-    require: () => ({contextBridge: {exposeInMainWorld: (name, value) => exposed.set(name, value)},
-      ipcRenderer: {invoke: (...args) => invokes.push(args), on: (channel, listener) => listeners.set(channel, listener),
-        removeListener: (channel) => listeners.delete(channel)}})
+    require: name => {
+      assert.equal(name, 'electron');
+      return {contextBridge: {exposeInMainWorld: (n, v) => exposed.set(n, v)},
+        ipcRenderer: {invoke: (...args) => invoked.push(args)}};
+    }
   });
-  const api = exposed.get('codexSessionSwitcher'); let received;
-  const off = api.onChanged((...args) => { received = args; });
-  listeners.get('codex-labels:session-switcher-changed')({secret: true}, {unexpected: true});
-  assert.deepEqual(received, []); off(); assert.equal(listeners.size, 0);
-  const value = {profileId: 'b'.repeat(32), confirmContextTransfer: true};
-  api.switchAccount(value); api.recover({confirmContextTransfer: true});
-  assert.equal(invokes[0][0], 'codex-labels:session-switcher-switch'); assert.equal(invokes[0][1], value);
-  assert.equal(invokes[1][0], 'codex-labels:session-switcher-recover');
-  assert.equal(api.invoke, undefined); assert.equal(api.ipcRenderer, undefined);
+  assert.deepEqual([...exposed.keys()], ['codexLabels']);
+  assert.equal(invoked.length, 0);
+  exposed.get('codexLabels').openAutomaticAccounts();
+  assert.deepEqual(invoked, [['codex-labels:auto-accounts-open']]);
+  assert.equal(exposed.get('codexLabels').switchAccount, undefined);
+  assert.equal(exposed.get('codexLabels').login, undefined);
+  assert.equal(exposed.get('codexLabels').logout, undefined);
 });

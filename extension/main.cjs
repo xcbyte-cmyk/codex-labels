@@ -16,17 +16,8 @@ if (process.platform === 'win32') {
   process.env.CODEX_CLI_PATH = path.join(process.resourcesPath, 'codex.exe');
   process.env.CODEX_APP_SERVER_FORCE_CLI = '1';
 }
-// codex-labels-session-switcher-main-v1
-// Actual stdio routing. Separate from the existing account/window picker.
-require('./codex-labels/session-switcher/index.cjs').install({
-  app, ipcMain, BrowserWindow, check, trustedContent,
-  executable: path.join(process.resourcesPath, 'codex.exe'),
-  accountsDirectory: path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'CodexLabels', 'AccountWindows', 'accounts'),
-  defaultHome: path.join(app.getPath('home'), '.codex'),
-  currentProfileId: accountProfile?.id || null,
-  storageDirectory: path.join(accountProfile?.directory || installedConfigDirectory, 'session-switches'),
-  enabled: !process.env.CODEX_LABELS_SMOKE_DIRECTORY
-});
+// Native relogin is renderer-only. Do not intercept app-server startup,
+// stdin/stdout, authentication, or per-connection lifetime here.
 
 const windowTitle = accountProfile ? `Codex Labels · ${accountProfile.name}` : 'Codex Labels';
 // Installer smoke uses a fresh config, profile and CODEX_HOME, never account data.
@@ -45,6 +36,12 @@ if (process.platform === 'win32') {
   process.env.CODEX_ELECTRON_USER_DATA_PATH = profile;
   app.setPath('userData', profile);
 }
+// Registered-account handoff helper; no app-server traffic interception.
+const automaticAccounts = require('./codex-labels/auto-account-main.cjs').install({
+  app, ipcMain, check, root: installedConfigDirectory,
+  home: accountProfile?.home || process.env.CODEX_HOME || path.join(app.getPath('home'), '.codex'),
+  profile, profileId: accountProfile?.id || null, enabled: !smokeDirectory
+});
 const store = createStore(configDirectory);
 const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
 const {registerVocabulary} = require('./codex-labels/vocabulary-ipc.cjs');
@@ -159,7 +156,7 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
-  fs.readFileSync(path.join(__dirname, 'codex-labels/session-switcher-renderer.js'), 'utf8') + '\n' +
+  fs.readFileSync(path.join(__dirname, 'codex-labels/auto-account-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8') + (accountProfile ? `\n(() => {
     if (document.getElementById('codex-labels-account-name')) return;
     const badge = document.createElement('div'); badge.id = 'codex-labels-account-name';
