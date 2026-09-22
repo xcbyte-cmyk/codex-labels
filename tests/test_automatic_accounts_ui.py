@@ -16,6 +16,11 @@ class PickerTests(unittest.TestCase):
     def setUp(self):
         import tkinter as tk
         self.t=tempfile.TemporaryDirectory();self.root=Path(self.t.name)
+        # Picker imports registered profiles from LOCALAPPDATA. Never let a
+        # synthetic UI test read the machine's real account credentials.
+        self.account_environment = patch.dict(os.environ, {'LOCALAPPDATA': str(self.root / 'local')})
+        self.account_environment.start()
+        self.addCleanup(self.account_environment.stop)
         self.home=self.root/'home';self.home.mkdir();atomic_write(self.home/'auth.json',credential('A').raw)
         self.vault=Vault(self.root/'vault',TestProtector());self.bid=self.vault.save(credential('B'),'작업 계정 B')
         self.log=[];self.desktop=FakeDesktop(self.log);self.verifier=FakeVerifier(self.log)
