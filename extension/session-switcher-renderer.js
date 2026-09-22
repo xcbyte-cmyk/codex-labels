@@ -36,7 +36,7 @@
     document.body.append(dialog); dialog.showModal();
     let state = null, busy = false, live = true, requestVersion = 0, timer;
     function controls() {
-      const switching = ['switching', 'cancelling', 'checking'].includes(state?.phase);
+      const switching = ['switching', 'cancelling', 'checking', 'authenticating'].includes(state?.phase);
       change.disabled = busy || !consent.checked || state?.phase !== 'idle' || !profiles.value || profiles.value === state?.activeProfile?.id;
       recover.disabled = busy || !consent.checked || !state || state.nativeLoginPending || !['blocked', 'idle'].includes(state.phase);
       cancel.disabled = !(busy || switching); usage.disabled = busy || state?.phase !== 'idle';
@@ -47,6 +47,9 @@
       state = value;
       if (!state) { status.textContent = '로컬 앱 서버 연결을 기다리고 있습니다.'; controls(); return; }
       status.textContent = `현재 계정: ${state.activeProfile?.name || '로그인 확인 필요'}\n상태: ${state.phase}${state.blockedReason ? ' · ' + state.blockedReason : ''}\n유지되는 저장 위치: ${state.workspaceHome}` +
+        (Number.isInteger(state.connectionCount) ? `\n앱 서버 연결: ${state.connectionCount}개 · 계정 확인 완료: ${state.verifiedConnectionCount ?? 0}개` : '') +
+        (state.phase === 'synchronizing' ? '\n새 연결의 계정을 확인하는 동안 새 작업 요청은 차단합니다.' : '') +
+        (state.retiringConnectionCount ? `\n종료 확인 중인 연결: ${state.retiringConnectionCount}개` : '') +
         (Number.isInteger(state.localConversationCount) ? `\n전환 검사에서 확인한 로컬 대화: ${state.localConversationCount}개` : '');
       controls();
     }
