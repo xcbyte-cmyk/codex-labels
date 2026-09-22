@@ -619,7 +619,7 @@ class WorkspaceConnection extends WorkspaceGateway {
     // retain only per-connection accounting and protocol validation.
     super({...options, selectionStore: {read: () => coordinator.saved}});
     this.coordinator = coordinator; this.initialized = false; this.initializeAccepted = false;
-    this.initializedQueued = false;
+    this.preInitializeQueue = [];
     this.verified = false; this.verifiedGeneration = -1; this.inFlightWork = 0; this.accepting = 0;
     coordinator.attach(this);
   }
@@ -666,6 +666,13 @@ class WorkspaceConnection extends WorkspaceGateway {
   async accept(m) {
     const group = this.coordinator;
     if (!group) return;
+    // Desktop can pipeline `initialized` and initial reads before the
+    // app-server has answered `initialize`. The real pipe preserves that
+    // ordering; keep the same ordering while the proxy awaits the response.
+    if (m.method !== 'initialize' && !this.initialized && this.initializePending) {
+      if (this.preInitializeQueue.length >= 512) { group.block('PROTOCOL_ERROR', {durable: true}); return; }
+      this.preInitializeQueue.push(m); return;
+    }
     if (!m.method) {
       const pending = this.rpc.serverRequests.get(m.id);
       if (!pending) return;
@@ -688,11 +695,6 @@ class WorkspaceConnection extends WorkspaceGateway {
       if (m.method === 'initialized' && !this.initialized) {
         if (this.initializeAccepted) {
           this.rpc.notify(m.method, m.params); this.initialized = true; this.bootstrap();
-        } else if (this.initializePending) {
-          // Desktop may pipeline `initialized` immediately after `initialize`
-          // instead of waiting for the response. Preserve wire order without
-          // treating the next request as an uninitialized protocol violation.
-          this.initializedQueued = true;
         }
       }
       return;
@@ -707,8 +709,12 @@ class WorkspaceConnection extends WorkspaceGateway {
         const r = await this.rpc.exchange(m.method, {...m.params, capabilities: {...m.params?.capabilities, experimentalApi: true}});
         this.initializePending = false; this.initializeAccepted = !r.error;
         this.publish({id: m.id, ...r});
-        if (this.initializeAccepted && this.initializedQueued && !this.initialized) {
-          this.initializedQueued = false; this.rpc.notify('initialized'); this.initialized = true; this.bootstrap();
+        const queued = this.preInitializeQueue.splice(0);
+        if (this.initializeAccepted) {
+          for (const message of queued) await this.accept(message);
+        } else {
+          for (const message of queued) if (hasId(message))
+            this.publish({id: message.id, error: {code: -32000, message: 'PROTOCOL_ERROR: initialization failed'}});
         }
         return;
       }

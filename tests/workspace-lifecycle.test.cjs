@@ -83,8 +83,10 @@ test('Desktop may pipeline initialized before the initialize response',async t=>
   const a=await h.add({start:false,tweak:s=>{s.initializeWait=wait;}});
   const response=a.client.call('initialize',{clientInfo:{name:'desktop'},capabilities:{}});
   a.client.notify('initialized');
+  const initialList=a.client.call('thread/list',{limit:1});
   await tick(); assert.equal(a.connection.initialized,false);
-  release(); await response; await until(()=>a.connection.initialized && a.connection.verified);
+  release(); await response; assert.equal((await initialList).data.length,1);
+  await until(()=>a.connection.initialized && a.connection.verified);
   assert.equal(h.group.phase,'idle'); assert.equal(await run(a.client),'A');
 });
 test('a joining peer is quarantined and blocks new work on existing peers until pinned auth finishes',async t=>{
