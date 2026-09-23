@@ -1,6 +1,6 @@
 'use strict';
 // Loaded by early-bootstrap.js BEFORE the upstream single-instance lock.
-const {app, ipcMain, shell, BrowserWindow, Notification} = require('electron');
+const {app, ipcMain, shell, BrowserWindow, Notification, Tray, Menu} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const {fileURLToPath} = require('node:url');
@@ -98,6 +98,9 @@ function broadcastConfigChange() {
 const notifications = createNotifications({app, shell, Notification, profile, defaultProfile,
   getWindows: () => BrowserWindow.getAllWindows(), trustedContent,
   onStatus: notification => recordStatus({notification})});
+const {createTray} = require('./codex-labels/tray.cjs');
+const tray = createTray({app, BrowserWindow, Tray, Menu, iconPath: process.execPath,
+  title: 'Codex Labels', enabled: !smokeDirectory});
 ipcMain.handle('codex-labels:read', (event, knownVersion) => { check(event); return cache.snapshot(knownVersion); });
 ipcMain.handle('codex-labels:assign', (event, key, id) => {
   check(event); return cache.update(store.assign(key, id));
@@ -151,7 +154,7 @@ app.on('web-contents-created', (_event, contents) => {
     contents.executeJavaScript(source).catch(() => recordStatus({status: 'renderer-initialization-failed'}));
   });
 });
-app.once('will-quit', () => { notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
+app.once('will-quit', () => { tray.dispose(); notifications.dispose(); cache.close(); recordStatus({status: 'stopped'}); flushStatus(); });
 recordStatus({notification: notifications.status()});
 // Exercise the shipped Electron/preload/renderer bridge without account onboarding.
 if (smokeDirectory) app.whenReady().then(() => {

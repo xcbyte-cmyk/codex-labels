@@ -14,7 +14,7 @@ VERSION = 'OpenAI.Codex_26.911.7940.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
 SUPPORTED_APP_VERSION = '26.911.61220'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'tray.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
