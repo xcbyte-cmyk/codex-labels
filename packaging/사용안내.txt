@@ -1,4 +1,4 @@
-Codex Labels 0.3.0 - Windows x64
+Codex Labels 0.3.4 - Windows x64
 
 처음 한 번
 1. 이 PC에 공식 Codex를 설치합니다.
