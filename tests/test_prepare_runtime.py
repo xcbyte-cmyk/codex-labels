@@ -2,7 +2,9 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,7 +19,8 @@ def write_archive(path, files, activity=True):
         controller = builder.ACTIVITY_CONTROLLER.encode()
         files.setdefault(builder.ACTIVITY_BUNDLE,
             b'function cached(){' + controller + b'.observeCatalogThreads(e)};function live(){' +
-            controller + b'.observeCatalogThreads(r)}')
+            controller + b'.observeCatalogThreads(r)};' + builder.CATALOG_INDEX.encode() +
+            builder.CATALOG_SORT.encode())
     header = {'files': {}}
     offset = 0
     for name, data in files.items():
@@ -96,6 +99,48 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'Unsupported activity catalog hook'):
             builder.build_asar(self.archive,self.root/'bad.asar',self.root)
         self.assertFalse((self.root/'bad.asar').exists())
+
+    def test_catalog_index_keeps_first_sorted_host_and_refresh_is_idempotent(self):
+        patched = self.root/'patched.asar'
+        builder.build_asar(self.archive, patched, self.root)
+        content = read_archive(patched)[builder.ACTIVITY_BUNDLE][0]
+        self.assertEqual(content.count(builder.CATALOG_INDEX_PATCHED.encode()), 1)
+        self.assertEqual(content.count(builder.CATALOG_SORT.encode()), 1)
+        self.assertNotIn(builder.CATALOG_INDEX.encode(), content)
+        self.assertLess(builder.CATALOG_INDEX_PATCHED.index('!t.has'), builder.CATALOG_INDEX_PATCHED.index('t.set'))
+        if shutil.which('node'):
+            script = ('const ti=x=>x;' + builder.CATALOG_INDEX_PATCHED + builder.CATALOG_SORT +
+                      "const rows=[{hostId:'remote-ssh-discovered:codex-runner-a1',threadId:'same',sourceKind:'vscode',sourceRecencyAt:10,sourceCreatedAt:5}," +
+                      "{hostId:'local',threadId:'same',sourceKind:'vscode',sourceRecencyAt:10,sourceCreatedAt:5}];" +
+                      "if(HZn(rows.sort(WZn)).get('same').hostId!=='local')process.exit(1);")
+            subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)
+        refreshed = self.root/'refreshed.asar'
+        builder.build_asar(patched, refreshed, self.root, refresh=True)
+        refreshed_content = read_archive(refreshed)[builder.ACTIVITY_BUNDLE][0]
+        self.assertEqual(refreshed_content.count(builder.CATALOG_INDEX_PATCHED.encode()), 1)
+        self.assertEqual(refreshed_content.count(b'__codexLabelsActivitySync.observe(n,'), 2)
+
+    def test_unknown_catalog_index_is_rejected(self):
+        self.files[builder.ACTIVITY_BUNDLE] = (
+            b'function cached(){' + builder.ACTIVITY_CONTROLLER.encode() + b'.observeCatalogThreads(e)};'
+            b'function live(){' + builder.ACTIVITY_CONTROLLER.encode() + b'.observeCatalogThreads(r)};'
+            b'function HZn(e){return new Map}')
+        write_archive(self.archive, self.files)
+        target = self.root/'bad.asar'
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported catalog host index'):
+            builder.build_asar(self.archive, target, self.root)
+        self.assertFalse(target.exists())
+
+    def test_unknown_catalog_sort_is_rejected(self):
+        self.files[builder.ACTIVITY_BUNDLE] = (
+            b'function cached(){' + builder.ACTIVITY_CONTROLLER.encode() + b'.observeCatalogThreads(e)};'
+            b'function live(){' + builder.ACTIVITY_CONTROLLER.encode() + b'.observeCatalogThreads(r)};' +
+            builder.CATALOG_INDEX.encode())
+        write_archive(self.archive, self.files)
+        target = self.root/'bad.asar'
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported catalog host order'):
+            builder.build_asar(self.archive, target, self.root)
+        self.assertFalse(target.exists())
 
     def test_missing_activity_bundle_is_rejected(self):
         write_archive(self.archive,self.files,activity=False)

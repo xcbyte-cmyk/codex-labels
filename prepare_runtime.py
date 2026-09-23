@@ -17,6 +17,13 @@ SUPPORTED_APP_VERSION = '26.915.31945'
 ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
 ACTIVITY_CONTROLLER = 'ep(o,n)'
 ACTIVITY_COORDINATION = 'yU.clientCoordination'
+# The native catalog sorts newest entries first. Its thread-ID index used to
+# overwrite the first match with later, stale entries from another host.
+# Keep the first match so a current local entry wins over a duplicate remote
+# entry (and the native live summary can still supersede the catalog).
+CATALOG_INDEX = 'function HZn(e){let t=new Map;for(let n of e)n.sourceKind!==`chatgpt`&&t.set(ti(n.threadId),n);return t}'
+CATALOG_INDEX_PATCHED = 'function HZn(e){let t=new Map;for(let n of e)n.sourceKind!==`chatgpt`&&!t.has(ti(n.threadId))&&t.set(ti(n.threadId),n);return t}'
+CATALOG_SORT = 'function WZn(e,t){return t.sourceRecencyAt-e.sourceRecencyAt||t.sourceCreatedAt-e.sourceCreatedAt||e.hostId.localeCompare(t.hostId)||e.threadId.localeCompare(t.threadId)}'
 EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'auto-account-renderer.js', 'auto-account-main.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
@@ -130,6 +137,15 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                     raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
                 activity_source = activity_source.replace(anchor, anchor +
                     f',globalThis.__codexLabelsActivitySync.observe(n,{variable},{ACTIVITY_CONTROLLER},{ACTIVITY_COORDINATION})')
+            if activity_source.count(CATALOG_INDEX_PATCHED):
+                if not refresh or activity_source.count(CATALOG_INDEX_PATCHED) != 1:
+                    raise RuntimeError('Unknown catalog host index patch; keep the current runtime.')
+                activity_source = activity_source.replace(CATALOG_INDEX_PATCHED, CATALOG_INDEX, 1)
+            if activity_source.count(CATALOG_INDEX) != 1:
+                raise RuntimeError('Unsupported catalog host index; original installation was not changed.')
+            if activity_source.count(CATALOG_SORT) != 1:
+                raise RuntimeError('Unsupported catalog host order; original installation was not changed.')
+            activity_source = activity_source.replace(CATALOG_INDEX, CATALOG_INDEX_PATCHED, 1)
             changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
             if extra:
                 changed.update(extra)
