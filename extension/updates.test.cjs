@@ -66,7 +66,7 @@ test('local status reports running version separately and restart quits only aft
   const updater=createUpdater(root,{
     execute(_exe,args,_options,cb){if(args[0]==='codex-status'){cb(null,'{"state":"same"}');return;}assert.equal(args[0],'update-status');cb(null,JSON.stringify({currentVersion:'0.2.1',downloadedVersion:'0.2.1',pendingRestart:true}));},
     start(_exe,args,options){
-      requested=args;assert.equal(options.detached,true);assert.equal(options.windowsHide,true);
+      requested=args;assert.equal(options.detached,true);assert.equal(options.windowsHide,true);assert.equal(options.cwd,root);
       const child=new EventEmitter();child.unref=()=>{};
       const token=args.at(-1);setTimeout(()=>fs.writeFileSync(path.join(root,'.restarts',token+'.json'),JSON.stringify({ready:true,token,processId:42})),10);
       return child;
