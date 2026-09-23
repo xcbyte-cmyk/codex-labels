@@ -616,7 +616,7 @@ class WindowsDesktop:
             shared = Path(os.environ.get('LOCALAPPDATA', '')) / 'CodexLabels' / 'AccountWindows' / 'accounts'
             if self.home.parent.parent == shared.resolve():
                 args.append('--codex-labels-account-protocol=1')
-        child = subprocess.Popen(args, cwd=self.root, env=env, stdin=subprocess.DEVNULL,
+        child = subprocess.Popen(args, cwd=self.exe.parent, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.7)
         require(child.poll() is None, 'REOPEN_FAILED')

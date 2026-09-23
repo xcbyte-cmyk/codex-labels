@@ -242,6 +242,8 @@ class BoundaryTests(unittest.TestCase):
                 launch.return_value.poll.return_value = None
                 desktop.reopen()
             self.assertIn('--codex-labels-account-protocol=1', launch.call_args.args[0])
+            self.assertIn('--user-data-dir=' + str(desktop.profile), launch.call_args.args[0])
+            self.assertEqual(launch.call_args.kwargs['cwd'], desktop.exe.parent)
             self.assertEqual(launch.call_args.kwargs['env']['CODEX_HOME'], str(desktop.home))
             self.assertEqual(launch.call_args.kwargs['env']['CODEX_ELECTRON_USER_DATA_PATH'], str(desktop.profile))
     def test_environment_drops_other_account_routing(self):
