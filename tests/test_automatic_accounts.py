@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -227,6 +228,42 @@ class HandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(AccountError, 'WINDOWS_REQUIRED'): DPAPI().seal(b'test')
 
 class BoundaryTests(unittest.TestCase):
+    def test_shutdown_capture_ignores_task_tools_and_other_app_copies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            desktop = object.__new__(WindowsDesktop)
+            desktop.exe = base / 'runtime' / 'app' / 'ChatGPT.exe'
+            desktop.cli = base / 'runtime' / 'app' / 'resources' / 'codex.exe'
+            desktop.parent = (100, 1.0)
+            desktop.helper_pids = {900}
+            desktop.tracked = {}
+            desktop.alive = lambda _pid, _created: True
+
+            class MissingProcess(Exception):
+                pass
+
+            class Process:
+                def __init__(self, pid, path, ancestors=(), vanished=False):
+                    self.pid, self.path, self.ancestors, self.vanished = pid, path, ancestors, vanished
+                def name(self):
+                    if self.vanished: raise MissingProcess()
+                    return self.path.name
+                def exe(self): return str(self.path)
+                def parents(self): return [SimpleNamespace(pid=pid) for pid in self.ancestors]
+                def create_time(self): return float(self.pid)
+
+            parent = Process(100, desktop.exe)
+            children = [Process(101, desktop.exe), Process(102, desktop.cli),
+                        Process(103, base / 'tools' / 'pwsh.exe'),
+                        Process(104, base / 'other' / 'ChatGPT.exe'),
+                        Process(105, desktop.exe, ancestors=(900,)),
+                        Process(106, desktop.cli, vanished=True)]
+            parent.children = lambda recursive: children
+            desktop.psutil = SimpleNamespace(Process=lambda _pid: parent,
+                                             NoSuchProcess=MissingProcess, Error=Exception)
+            desktop.capture()
+            self.assertEqual(desktop.tracked, {100: 100.0, 101: 101.0, 102: 102.0})
+
     def test_shared_environment_restart_preserves_account_protocol_and_home(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()

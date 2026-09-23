@@ -584,9 +584,20 @@ class WindowsDesktop:
         if self.parent and self.alive(*self.parent):
             try:
                 p = self.psutil.Process(self.parent[0]); self.tracked[p.pid] = p.create_time()
+                # Wait for the desktop and its bundled app-server before
+                # replacing shared auth. Task tools may outlive the window
+                # and must not block an account switch.
+                owned = {self.exe.resolve(), self.cli.resolve()}
                 for child in p.children(recursive=True):
-                    if child.pid in self.helper_pids or any(a.pid in self.helper_pids for a in child.parents()): continue
-                    self.tracked[child.pid] = child.create_time()
+                    try:
+                        if child.name().casefold() not in ('chatgpt.exe', 'codex.exe'): continue
+                        if child.pid in self.helper_pids or any(a.pid in self.helper_pids for a in child.parents()): continue
+                        if Path(child.exe()).resolve() not in owned: continue
+                        self.tracked[child.pid] = child.create_time()
+                    except self.psutil.NoSuchProcess:
+                        continue
+            except self.psutil.NoSuchProcess:
+                return
             except self.psutil.Error: raise AccountError('PROCESS_CHECK_FAILED') from None
     def close_and_wait(self):
         import sys
