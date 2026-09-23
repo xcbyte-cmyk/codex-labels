@@ -36,7 +36,7 @@ class NotificationBuildTests(unittest.TestCase):
         self.source = self.root/'installed/app'
         self.archive = self.source/'resources/app.asar'
         self.files = {
-            'package.json': json.dumps({'version': builder.SUPPORTED_APP_VERSION}).encode(),
+            'package.json': json.dumps({'version': builder.VERIFIED_APP_VERSION}).encode(),
             '.vite/build/early-bootstrap.js': b'/* original bootstrap */',
             '.vite/build/preload.js': b'/* original preload */',
             'unchanged.bin': b'original\x00payload'

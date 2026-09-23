@@ -59,8 +59,8 @@ def tool_backup(root, version):
     return None
 
 
-def checkpoint(root, backup, old_receipt, new_payload):
-    save(root, {'schemaVersion': 1, 'phase': 'switching', 'payload': new_payload,
+def checkpoint(root, backup, old_receipt, new_payload, source=None):
+    save(root, {'schemaVersion': 1, 'phase': 'switching', 'payload': new_payload, 'source': source,
                 'runtimeBackup': backup.name if backup else None,
                 'previousHash': old_receipt.get('patchedAsarSha256'),
                 'previousPayload': old_receipt.get('helperPayloadSha256'),
@@ -89,6 +89,26 @@ def complete(root):
         value.update(phase='active', notice=None)
         value.pop('blockedPayload', None)
         save(root, value)
+        prune(root, value)
+
+
+def prune(root, value):
+    """Keep only the one backup that rollback can use; each is a full app copy."""
+    keep = backup_path(root, value)
+    for folder in (Path(root).resolve()/'runtime').glob('app.backup-*'):
+        if folder != keep and folder.resolve() == folder and folder.is_dir():
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def source_failed(root, source, payload, message):
+    """Do not rebuild for the same Codex build until it or Labels changes."""
+    value = state(root)
+    if value.get('phase') == 'switching':
+        # prepare() already moved the previous runtime back into place.
+        value.update(phase='active', runtimeBackup=None)
+    value.update(schemaVersion=1, blockedSource=source, blockedSourcePayload=payload,
+                 notice='새 Codex에 맞춘 준비에 실패해 이전 실행본을 사용합니다. ' + str(message)[:500])
+    save(root, value)
 
 
 def backup_path(root, value):
@@ -122,7 +142,8 @@ def restore(root, valid_runtime, running_apps):
                         and json.loads((current/'codex-labels-build.json').read_text(encoding='utf-8')).get('helperPayloadSha256') == value.get('previousPayload'))
     if not already_restored and (not backup or not valid_runtime(root, backup) or digest(backup/'resources/app.asar') != value.get('previousHash')):
         raise RuntimeError('복구할 정상 실행본을 찾지 못했습니다.')
-    value.update(phase='restoring', blockedPayload=value.get('payload') or value.get('blockedPayload'))
+    value.update(phase='restoring', blockedPayload=value.get('payload') or value.get('blockedPayload'),
+                 blockedSource=value.get('source'), blockedSourcePayload=value.get('payload'))
     save(root, value)
     if not already_restored:
         if current.exists():

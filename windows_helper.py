@@ -52,18 +52,29 @@ def find_source(explicit=None):
         source = Path(explicit).resolve()
         builder.validate_source(source)
         return source
-    candidates = installed_sources()
-    if not candidates and builder.SOURCE.is_dir():
-        candidates = [builder.SOURCE]
-    for candidate in candidates:
-        try:
-            builder.validate_source(candidate)
-            return candidate.resolve()
-        except (ValueError, KeyError, OSError, RuntimeError):
-            continue
-    raise RuntimeError('지원하는 공식 Codex 설치본을 찾지 못했습니다. '
-        '이 패키지는 ' + builder.VERSION + ' / 내부 앱 ' + builder.SUPPORTED_APP_VERSION +
-        '용입니다. 다른 버전은 호환 패키지가 필요합니다. 원본 앱은 변경하지 않았습니다.')
+    try:
+        return builder.newest_source(installed_sources())
+    except ValueError:
+        raise RuntimeError('지원하는 공식 Codex 설치본을 찾지 못했습니다. Microsoft Store에서 Codex를 설치한 뒤 '
+            '다시 실행하세요. 원본 앱은 변경하지 않았습니다.') from None
+
+
+def official_update(root, explicit=None):
+    """The newest official build when it differs from this runtime's base."""
+    receipt = read_receipt(root) or {}
+    saved = recovery.state(root)
+    if saved.get('phase') not in (None, 'active', 'rolled-back'):
+        return None  # Another update is still being confirmed or restored.
+    try:
+        source = find_source(explicit)
+        source_hash = builder.file_hash(source/'resources/app.asar')
+    except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError):
+        return None
+    if source_hash == receipt.get('sourceAsarSha256'):
+        return None
+    if saved.get('blockedSource') == source_hash and saved.get('blockedSourcePayload') == payload_fingerprint():
+        return None
+    return source, source_hash
 
 
 def profile_path():
@@ -238,7 +249,7 @@ def prepare(root, source=None, progress=None, *, verify_runtime=False):
             raise RuntimeError('설치 중 Labels가 다시 열렸습니다. 현재 실행본을 유지합니다. 앱에서 다시 설치해 주세요.')
         if target.exists():
             previous = target.with_name('app.backup-' + datetime.now().strftime('%Y%m%d-%H%M%S-') + uuid.uuid4().hex[:8])
-            recovery.checkpoint(root, previous, old_receipt, payload_fingerprint())
+            recovery.checkpoint(root, previous, old_receipt, payload_fingerprint(), receipt.get('sourceAsarSha256'))
             move_runtime(target, previous)
             backup = previous
         move_runtime(incoming, target)
@@ -351,10 +362,7 @@ def codex_status(root):
         root = Path(root).resolve()
         receipt = read_receipt(root) or {}
         base = receipt.get('sourceAppVersion') or builder.source_version(root/'runtime/app')
-        sources = installed_sources()
-        if not sources and builder.SOURCE.is_dir():
-            sources = [builder.SOURCE]
-        installed = {builder.source_version(source) for source in sources}
+        installed = {builder.source_version(source) for source in installed_sources()}
         def parts(value):
             if not isinstance(value, str) or len(value) > 64 or not re.fullmatch(r'\d+(?:\.\d+)+', value):
                 raise ValueError('Invalid installed version')
@@ -495,6 +503,20 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
                 update_error = saved.get('notice')
             else:
                 exe = require_ready(root)
+            # Follow the official app: rebuild from a newer Store build, and
+            # keep the current runtime if that build cannot be patched.
+            follow = None if skip_update or exe.resolve() in running_apps() else official_update(root, source)
+            if follow:
+                progress('새 Codex 버전에 맞춰 Labels를 준비하고 있습니다', 15)
+                try:
+                    prepare(root, follow[0], progress, verify_runtime=getattr(sys, 'frozen', False))
+                    exe = require_ready(root)
+                except Exception as error:
+                    if not valid_runtime(root, root/'runtime/app'):
+                        raise
+                    exe = root/'runtime/app/ChatGPT.exe'
+                    recovery.source_failed(root, follow[1], payload_fingerprint(), error)
+                    update_error = recovery.state(root).get('notice')
         except RuntimeError:
             if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
@@ -656,8 +678,6 @@ def main():
                         sources = [args.source.resolve()] if args.source else installed_sources()
                     except (OSError, RuntimeError, subprocess.SubprocessError):
                         sources = []
-                    if not sources and builder.SOURCE.is_dir():
-                        sources = [builder.SOURCE]
                     versions = set()
                     for source in sources:
                         try: versions.add(builder.source_version(source))
@@ -674,7 +694,7 @@ def main():
                 require_ready(root); ready = True
             except RuntimeError:
                 ready = False
-            result = {'helperVersion': VERSION, 'supportedAppVersion': builder.SUPPORTED_APP_VERSION,
+            result = {'helperVersion': VERSION, 'appVersionPolicy': 'detect', 'verifiedAppVersion': builder.VERIFIED_APP_VERSION,
                 'source': str(source), 'root': str(root), 'ready': ready, 'originalInstallModified': False}
         elif args.action == 'prepare':
             with preparation_lock(root):

@@ -387,7 +387,7 @@ class LabelRendererTests(unittest.TestCase):
         notice=self.page.locator('#cdx-codex-notice')
         self.assertTrue(notice.is_visible())
         self.assertIn('새 Codex 버전 감지됨',notice.inner_text())
-        self.assertIn('호환성은 아직 확인되지 않았습니다',notice.inner_text())
+        self.assertIn('새 Codex에 맞춰 자동으로 준비합니다',notice.inner_text())
         self.assertEqual(self.page.evaluate('fixture.updateCalls'),['local','check'])
         self.assertFalse(self.page.get_by_role('button',name='설치하고 다시 실행',exact=True).is_visible())
         self.page.get_by_role('button',name='Labels 업데이트 확인',exact=True).click()

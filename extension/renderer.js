@@ -292,7 +292,7 @@
         codexNotice.hidden=!changed;check.textContent=changed?'Labels 업데이트 확인':'업데이트 확인';
         if(changed){
           codexTitle.textContent=result.codex.newer?'새 Codex 버전 감지됨':'원본 Codex 버전 변경 감지됨';
-          codexDetail.textContent=`Labels 기반: ${result.codex.baseVersion} · 설치된 원본: ${result.codex.installedVersion}. 호환성은 아직 확인되지 않았습니다. 원본 업데이트를 자동으로 적용하지 않습니다.`;
+          codexDetail.textContent=`Labels 기반: ${result.codex.baseVersion} · 설치된 원본: ${result.codex.installedVersion}. Labels를 다시 실행하면 새 Codex에 맞춰 자동으로 준비합니다. 준비에 실패하면 기존 실행본을 계속 사용합니다.`;
         }
         versions.hidden=false;
         versions.textContent=`실행 중: ${result.currentVersion?'v'+result.currentVersion:'버전 확인 불가'}`;

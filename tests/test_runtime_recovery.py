@@ -16,11 +16,13 @@ class RecoveryTests(unittest.TestCase):
         self.base = Path(temp.name)
         self.root = self.base/'labels'; self.source = self.base/'official/app'
         write_archive(self.source/'resources/app.asar', {
-            'package.json': json.dumps({'version': builder.SUPPORTED_APP_VERSION}).encode(),
+            'package.json': json.dumps({'version': builder.VERIFIED_APP_VERSION}).encode(),
             '.vite/build/early-bootstrap.js': b'/* original bootstrap */',
             '.vite/build/preload.js': b'/* original preload */', 'original.txt': b'unchanged'})
         (self.source/'ChatGPT.exe').write_bytes(b'fake-not-executed')
         p = patch.object(helper, 'running_apps', return_value=[]); p.start(); self.addCleanup(p.stop)
+        # Never discover the real Store installation from tests.
+        p = patch.object(helper, 'installed_sources', return_value=[self.source]); p.start(); self.addCleanup(p.stop)
         helper.prepare(self.root, self.source)
         receipt = helper.read_receipt(self.root)
         receipt.update(helperPayloadSha256='previous-payload', helperVersion='0.2.1')

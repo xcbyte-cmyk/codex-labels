@@ -37,7 +37,7 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(os.environ['CODEX_LABELS_PACKAGE_ZIP']) as archive:
                 archive.extractall(root)
             write_archive(source/'resources/app.asar', {
-                'package.json': json.dumps({'version': builder.SUPPORTED_APP_VERSION}).encode(),
+                'package.json': json.dumps({'version': builder.VERIFIED_APP_VERSION}).encode(),
                 '.vite/build/early-bootstrap.js': b'/* bootstrap */',
                 '.vite/build/preload.js': b'/* preload */'})
             (source/'ChatGPT.exe').write_bytes(b'never-launch-synthetic')

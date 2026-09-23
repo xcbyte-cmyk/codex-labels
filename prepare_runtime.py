@@ -5,18 +5,27 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
+import subprocess
+import sys
 import uuid
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'OpenAI.Codex_26.915.4065.0_x64__2p2nqsd0c76g0'
-SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
+PACKAGE_NAME = 'OpenAI.Codex'
 MARKER = b'// codex-labels-v1'
-SUPPORTED_APP_VERSION = '26.915.31945'
-ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
-ACTIVITY_CONTROLLER = 'ep(o,n)'
-ACTIVITY_COORDINATION = 'yU.clientCoordination'
+# The newest version this source was exercised against. Any installed version
+# is accepted when its bundle has the structure the patch needs.
+VERIFIED_APP_VERSION = '26.917.51856'
+BOOTSTRAP_FILES = ('.vite/build/early-bootstrap.js', '.vite/build/preload.js')
+APP_VERSION = re.compile(r'\d+(?:\.\d+){1,3}')
+ACTIVITY_BUNDLE = re.compile(r'webview/assets/app-initial-[0-9A-Za-z_-]+\.js')
+# Catalog observations reach the host controller in exactly two places: the
+# batch held until a catalog refresh finishes and the live subscription.
+ACTIVITY_CALL = re.compile(r'(?P<controller>[\w$]+\([\w$]+,(?P<host>[\w$]+)\))\.observeCatalogThreads\((?P<threads>[\w$]+)\)(?=[});,])')
+ACTIVITY_SERVICES = re.compile(r'(?<![\w$.])(?P<services>[\w$]+)=await [\w$]+\.services(?![\w$])')
+ACTIVITY_INSERTED = re.compile(r',globalThis\.__codexLabelsActivitySync\.observe\([\w$]+,[\w$]+,[\w$]+\([\w$]+,[\w$]+\),[\w$]+\.clientCoordination\)')
 EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'auto-account-renderer.js', 'auto-account-main.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
@@ -56,6 +65,39 @@ def digest(data, block=4194304):
             'blocks': [hashlib.sha256(data[i:i+block]).hexdigest() for i in range(0, len(data), block)]}
 
 
+def check_app_version(value):
+    if not isinstance(value, str) or not APP_VERSION.fullmatch(value):
+        raise RuntimeError('Unsupported app version format: ' + str(value)[:40])
+    return value
+
+
+def activity_patch(names, read, old_activity=None):
+    """Return (bundle, patched bytes) for the one unambiguous catalog hook, else None."""
+    found = []
+    for name in sorted(names):
+        source = read(name).decode('utf-8')
+        if old_activity is not None and source.startswith(old_activity):
+            source = ACTIVITY_INSERTED.sub('', source[len(old_activity):])
+        calls = list(ACTIVITY_CALL.finditer(source))
+        if calls:
+            found.append((name, source, calls))
+    if len(found) != 1:
+        return None
+    name, source, calls = found[0]
+    services = {match.group('services') for match in ACTIVITY_SERVICES.finditer(source)}
+    if (len(calls) != 2 or len({call.group('controller') for call in calls}) != 1
+            or len({call.group('threads') for call in calls}) != 2 or len(services) != 1):
+        return None
+    coordination = services.pop() + '.clientCoordination'
+    if coordination not in source:
+        return None
+    for call in reversed(calls):
+        hook = (f',globalThis.__codexLabelsActivitySync.observe({call.group("host")},'
+                f'{call.group("threads")},{call.group("controller")},{coordination})')
+        source = source[:call.end()] + hook + source[call.end():]
+    return name, (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + source.encode('utf-8')
+
+
 def build_asar(source, target, config_directory, extra=None, *, refresh=False):
     source, target = Path(source), Path(target)
     if source.resolve() == target.resolve():
@@ -86,9 +128,10 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
                     raise ValueError('Truncated archive member: ' + name)
                 return data
 
-            if json.loads(read('package.json'))['version'] != SUPPORTED_APP_VERSION:
-                raise RuntimeError('Unsupported app version. Inspect the new version before patching.')
-            early, preload = '.vite/build/early-bootstrap.js', '.vite/build/preload.js'
+            check_app_version(json.loads(read('package.json')).get('version'))
+            if any(name not in original for name in BOOTSTRAP_FILES):
+                raise RuntimeError('Unsupported app structure: the Codex bootstrap files were not found.')
+            early, preload = BOOTSTRAP_FILES
             early_source, preload_source = read(early), read(preload)
             prefix = MARKER + b'\nrequire("./codex-labels-main.cjs");\n'
             if refresh:
@@ -108,29 +151,15 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
             }
             for name in EXTRA_EXTENSION_FILES:
                 changed['.vite/build/codex-labels/' + name] = (ROOT/'extension'/name).read_bytes()
-            # Exact-version hooks into the existing catalog observation path.
-            # Fail closed on upstream changes; never infer active state from labels.
-            activity_bundle = ACTIVITY_BUNDLE
-            if activity_bundle not in original:
-                raise RuntimeError('Unsupported activity catalog bundle; original installation was not changed.')
-            activity_source = read(activity_bundle).decode('utf-8')
+            # Optional hook into the existing catalog observation path. Labels,
+            # the vocabulary and accounts work without it; only background
+            # activity follow-up is skipped when the upstream shape is unknown.
+            old_activity = None
             if refresh:
                 old_activity = read('.vite/build/codex-labels/activity-sync.cjs').decode('utf-8') + '\n'
-                if not activity_source.startswith(old_activity):
-                    raise RuntimeError('Unknown activity patch; keep the current runtime.')
-                activity_source = activity_source[len(old_activity):]
-                for variable in ('e', 'r'):
-                    inserted = f',globalThis.__codexLabelsActivitySync.observe(n,{variable},{ACTIVITY_CONTROLLER},{ACTIVITY_COORDINATION})'
-                    if activity_source.count(inserted) != 1:
-                        raise RuntimeError('Unknown activity hook; keep the current runtime.')
-                    activity_source = activity_source.replace(inserted, '', 1)
-            for variable in ('e', 'r'):
-                anchor = f'{ACTIVITY_CONTROLLER}.observeCatalogThreads({variable})'
-                if activity_source.count(anchor) != 1:
-                    raise RuntimeError('Unsupported activity catalog hook; original installation was not changed.')
-                activity_source = activity_source.replace(anchor, anchor +
-                    f',globalThis.__codexLabelsActivitySync.observe(n,{variable},{ACTIVITY_CONTROLLER},{ACTIVITY_COORDINATION})')
-            changed[activity_bundle] = (ROOT/'extension/activity-sync.cjs').read_bytes() + b'\n' + activity_source.encode('utf-8')
+            activity = activity_patch([name for name in original if ACTIVITY_BUNDLE.fullmatch(name)], read, old_activity)
+            if activity:
+                changed[activity[0]] = activity[1]
             if extra:
                 changed.update(extra)
             for name, data in changed.items():
@@ -212,8 +241,46 @@ def source_version(source):
 
 
 def validate_source(source):
-    if source_version(source) != SUPPORTED_APP_VERSION:
-        raise ValueError('Unsupported app version. This patch supports ' + SUPPORTED_APP_VERSION + ' only.')
+    """Accept any Codex version whose archive has the files the patch needs."""
+    try:
+        version = check_app_version(source_version(source))
+    except RuntimeError as error:
+        raise ValueError(str(error)) from error
+    with (source/'resources/app.asar').open('rb') as file:
+        members = dict(entries(read_index(file)[0]))
+    if any(name not in members or members[name].get('unpacked') or 'link' in members[name] for name in BOOTSTRAP_FILES):
+        raise ValueError('Unsupported app structure: the Codex bootstrap files were not found.')
+    return version
+
+
+def version_key(value):
+    return tuple(map(int, value.split('.'))) if isinstance(value, str) and APP_VERSION.fullmatch(value) else ()
+
+
+def installed_sources():
+    """Registered Store installations, including ones on non-default drives."""
+    if sys.platform != 'win32':
+        return []
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "
+        f"@(Get-AppxPackage -Name {PACKAGE_NAME} | ForEach-Object {{ $_.InstallLocation }}) | ConvertTo-Json -Compress"],
+        capture_output=True, encoding='utf-8', errors='replace', timeout=60,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    values = json.loads(result.stdout) if result.returncode == 0 and result.stdout.strip() else []
+    return [Path(value)/'app' for value in ([values] if isinstance(values, str) else values)]
+
+
+def newest_source(candidates):
+    """The newest candidate that has a patchable structure."""
+    usable = []
+    for candidate in candidates:
+        try:
+            usable.append((version_key(validate_source(candidate)), Path(candidate).resolve()))
+        except (ValueError, KeyError, OSError, RuntimeError, struct.error):
+            continue
+    if not usable:
+        raise ValueError('Supported Codex installation not found. Use --source with its app directory.')
+    return max(usable)[1]
 
 
 def prepare_config(directory):
@@ -248,7 +315,7 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None, refre
         previous = json.loads((source/'codex-labels-build.json').read_text(encoding='utf-8'))
         if previous.get('version') != 3 or Path(previous.get('configPath', '')).resolve() != root/'labels.json' or previous.get('patchedAsarSha256') != file_hash(source/'resources/app.asar'):
             raise ValueError('Current runtime verification failed.')
-    validate_source(source)
+    app_version = validate_source(source)
     prepare_config(root)
     source_hash = file_hash(source/'resources/app.asar')
     stage = root/'runtime'/('.staging-' + uuid.uuid4().hex)
@@ -262,12 +329,14 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None, refre
         files = build_asar(source/'resources/app.asar', stage/'resources/app.asar', root, refresh=refresh)
         if file_hash(source/'resources/app.asar') != source_hash:
             raise RuntimeError('The installed app changed during the build. Retry with a stable installation.')
-        manifest = {'accountHostProtocol': 1, 'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': SUPPORTED_APP_VERSION, 'sourceAsarSha256': source_hash,
+        manifest = {'accountHostProtocol': 1, 'version': 3, 'sourcePackage': source.parent.name, 'sourceAppVersion': app_version, 'sourceAsarSha256': source_hash,
                     'patchedAsarSha256': file_hash(stage/'resources/app.asar'), 'changedArchiveFiles': files,
+                    'activityHook': any(ACTIVITY_BUNDLE.fullmatch(name) for name in files),
                     'configPath': str(root/'labels.json'), 'originalInstallModified': False,
                     'liveAppActivated': False, 'launchMode': 'side-by-side', 'nativeNotificationClickVerified': False}
         if previous:
-            manifest.update(sourcePackage=previous.get('sourcePackage'), sourceAsarSha256=previous.get('sourceAsarSha256'), basePreserved=True)
+            manifest.update(sourcePackage=previous.get('sourcePackage'), sourceAsarSha256=previous.get('sourceAsarSha256'),
+                            sourceAppVersion=previous.get('sourceAppVersion', app_version), basePreserved=True)
         # Stage the manifest too; a failure before publication leaves no half-built runtime/app.
         (stage/'codex-labels-build.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
         stage.rename(target)
@@ -281,11 +350,12 @@ def prepare_runtime(source, root=ROOT, *, destination=None, progress=None, refre
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=SOURCE,
-                        help='Installed Codex app directory containing ChatGPT.exe and resources/app.asar.')
+    parser.add_argument('--source', type=Path,
+                        help='Installed Codex app directory containing ChatGPT.exe and resources/app.asar. '
+                             'Defaults to the newest registered Store installation.')
     args = parser.parse_args()
     try:
-        target, files = prepare_runtime(args.source)
+        target, files = prepare_runtime(args.source or newest_source(installed_sources()))
     except (ValueError, KeyError, OSError, RuntimeError, struct.error) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps({'built': str(target), 'patchedFiles': len(files), 'originalInstallModified': False}), flush=True)
