@@ -17,7 +17,6 @@ if (process.platform === 'win32') {
   process.env.CODEX_CLI_PATH = path.join(process.resourcesPath, 'codex.exe');
   process.env.CODEX_APP_SERVER_FORCE_CLI = '1';
 }
-
 const windowTitle = accountProfile ? `Codex Labels · ${accountProfile.name}` : 'Codex Labels';
 // Installer smoke uses a fresh config, profile and CODEX_HOME, never account data.
 const smokeDirectory = process.env.CODEX_LABELS_SMOKE_DIRECTORY;
@@ -121,18 +120,6 @@ const {createAccountSwitcher} = require('./codex-labels/account-switcher.cjs');
 const accountSwitcher = createAccountSwitcher({root: installedConfigDirectory, currentAccount: accountProfile,
   BrowserWindow, helperPath: path.join(installedConfigDirectory, 'CodexLabelsHelper.exe'),
   localAppData: process.env.LOCALAPPDATA});
-// codex-labels-session-switcher-main-v1
-// Actual stdio routing. Separate from the existing account/window picker.
-require('./codex-labels/session-switcher/index.cjs').install({
-  app, ipcMain, BrowserWindow, check, trustedContent,
-  executable: path.join(process.resourcesPath, 'codex.exe'),
-  accountsDirectory: path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'CodexLabels', 'AccountWindows', 'accounts'),
-  defaultHome: path.join(app.getPath('home'), '.codex'),
-  currentProfileId: accountProfile?.id || null,
-  storageDirectory: path.join(accountProfile?.directory || installedConfigDirectory, 'session-switches'),
-  enabled: !process.env.CODEX_LABELS_SMOKE_DIRECTORY
-});
-
 ipcMain.handle('codex-labels:read', (event, knownVersion) => { check(event); return cache.snapshot(knownVersion); });
 ipcMain.handle('codex-labels:assign', (event, key, id) => {
   check(event); return cache.update(store.assign(key, id));
@@ -185,7 +172,6 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
-  fs.readFileSync(path.join(__dirname, 'codex-labels/session-switcher-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8') + (accountProfile ? `\n(() => {
     if (document.getElementById('codex-labels-account-name')) return;
     const badge = document.createElement('div'); badge.id = 'codex-labels-account-name';

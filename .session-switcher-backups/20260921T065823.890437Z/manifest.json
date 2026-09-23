@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "files": {
+    "extension/main.cjs": {
+      "before": "accfb662d952211e6aac2c4a52321178caaa59c1d881d3347956d90aee247dc1",
+      "after": "ead0066b1297ba4cce36ad7d221b29e35caebf6b10ad905eac8e1de7f4b0b289"
+    },
+    "extension/preload.js": {
+      "before": "c3ba8bc507e7341806f48388bd6ddd08b19de0cf8ee05f6b2a9bf8a34fe2a86e",
+      "after": "a183e90618e471ec3a6e8a879ae3d62195853b05aee1e64f6c07ad8da4fdd785"
+    },
+    "prepare_runtime.py": {
+      "before": "128c51210ae0ebeeaf262d5695d4bae4f47a8d4439efb7da2a6c3c97cc7700e5",
+      "after": "a52497f4d2f35be915a46c15f37a9f70c543ce95795e5a322fc7633ff1c1f60d"
+    },
+    "extension/session-switcher-preload.js": {
+      "before": null,
+      "after": "40d2d9def78a6ec17f18ffa4bd38751926c04cac819a359cbcb01928e86f2e63"
+    },
+    "extension/session-switcher-renderer.js": {
+      "before": null,
+      "after": "bffb7a5194922fc35ccb27f8734d61065516a2eba6fb5dc1a538a5e2e44d4c57"
+    },
+    "extension/session-switcher/backend.cjs": {
+      "before": null,
+      "after": "02598715365bc2dee055e6cbec7c0304e2f3fe98b1187c8d5e3407eba7dbe6ea"
+    },
+    "extension/session-switcher/common.cjs": {
+      "before": null,
+      "after": "36f245ad1258ff9180d4e0583d6bef28164dc52e08158828b06e1ce9d6853b9c"
+    },
+    "extension/session-switcher/controller.cjs": {
+      "before": null,
+      "after": "3b52d536be03b2ac9b5a5a25031900bf9b73cab4598dcb11d6ebb4a504612436"
+    },
+    "extension/session-switcher/gateway.cjs": {
+      "before": null,
+      "after": "bf30d31831deee180bbfc05f3ac5cd6c1edb54dc2a89431b706465003f55a524"
+    },
+    "extension/session-switcher/index.cjs": {
+      "before": null,
+      "after": "1862cd12c9c8949f5243a1d1a99c1881ee2db966fd63047e5d2a9793c8deffb5"
+    },
+    "extension/session-switcher/profiles.cjs": {
+      "before": null,
+      "after": "0e760bca61910af7cc2e18c762cf9077d5c35d539307e37d4bdbb7ccc39ef0f1"
+    },
+    "extension/session-switcher/rpc.cjs": {
+      "before": null,
+      "after": "d9090f481e1fbbdcc10b38ef78914898eea638cbc41a676c7fa1625174af9c37"
+    }
+  }
+}
