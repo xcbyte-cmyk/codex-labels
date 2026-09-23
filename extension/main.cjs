@@ -14,7 +14,6 @@ const accountProfile = resolveAccount(installedConfigDirectory);
 // after account environment selection, before the upstream bootstrap runs.
 if (process.platform === 'win32') {
   process.env.CODEX_CLI_PATH = path.join(process.resourcesPath, 'codex.exe');
-  process.env.CODEX_APP_SERVER_FORCE_CLI = '1';
 }
 // Native relogin is renderer-only. Do not intercept app-server startup,
 // stdin/stdout, authentication, or per-connection lifetime here.

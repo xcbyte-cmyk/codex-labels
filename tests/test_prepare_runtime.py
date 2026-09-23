@@ -75,6 +75,11 @@ class BuildTests(unittest.TestCase):
         self.assertIn(b'codex-labels:save-config', result['.vite/build/codex-labels-main.cjs'][0])
         self.assertIn(b'codex-labels:vocabulary-summarize', result['.vite/build/preload.js'][0])
         self.assertIn(b'registerVocabulary', result['.vite/build/codex-labels-main.cjs'][0])
+        # A copied Windows runtime still needs its bundled local CLI, but
+        # forcing CLI transport globally would route SSH hosts into local stdio.
+        self.assertIn(b'CODEX_CLI_PATH', result['.vite/build/codex-labels-main.cjs'][0])
+        self.assertNotIn(b'CODEX_APP_SERVER_FORCE_CLI', result['.vite/build/codex-labels-main.cjs'][0])
+        self.assertNotIn(b'CODEX_APP_SERVER_FORCE_CLI', result['.vite/build/codex-labels/account-profile.cjs'][0])
         for name in ('vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js'):
             self.assertEqual(result['.vite/build/codex-labels/' + name][0], (builder.ROOT/'extension'/name).read_bytes())
         location = json.loads(result['.vite/build/codex-labels-location.json'][0])
