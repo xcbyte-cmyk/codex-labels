@@ -66,6 +66,8 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
             header, base = read_index(src)
             original = dict(entries(copy.deepcopy(header)))
             archive_size = source.stat().st_size
+            # Historical experimental builds can still exist on a user's PC.
+            # Keep this guard even though those modules are no longer shipped.
             if refresh and any(name.startswith('.vite/build/codex-labels/session-switcher/') or
                                name == '.vite/build/codex-labels/session-switcher-renderer.js'
                                for name in original):
