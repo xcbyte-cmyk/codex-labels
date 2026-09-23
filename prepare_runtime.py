@@ -10,13 +10,13 @@ import struct
 import uuid
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'OpenAI.Codex_26.915.4065.0_x64__2p2nqsd0c76g0'
+VERSION = 'OpenAI.Codex_26.917.6896.0_x64__2p2nqsd0c76g0'
 SOURCE = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'WindowsApps' / VERSION / 'app'
 MARKER = b'// codex-labels-v1'
-SUPPORTED_APP_VERSION = '26.915.31945'
-ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
-ACTIVITY_CONTROLLER = 'ep(o,n)'
-ACTIVITY_COORDINATION = 'yU.clientCoordination'
+SUPPORTED_APP_VERSION = '26.917.51856'
+ACTIVITY_BUNDLE = 'webview/assets/app-initial-78d977413c37.js'
+ACTIVITY_CONTROLLER = 'wd(o,n)'
+ACTIVITY_COORDINATION = '$H.clientCoordination'
 EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'auto-account-renderer.js', 'auto-account-main.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
