@@ -108,7 +108,8 @@ function createUpdater(root, {execute = execFile, install = installStaged, start
       fs.mkdirSync(directory, {recursive:true});
       const acknowledgement = path.join(directory, token + '.json');
       const child = start(path.join(root, 'CodexLabelsHelper.exe'), [rollback ? 'rollback' : 'launch', '--root', root, '--wait-pid', String(process.pid), '--restart-token', token],
-        {detached:true, stdio:'ignore', windowsHide:true, env:environment()});
+        // Never inherit this app's runtime/app directory: the helper renames it.
+        {cwd:root, detached:true, stdio:'ignore', windowsHide:true, env:environment()});
       child.unref();
       const deadline = Date.now() + ackTimeout;
       let finished = false, timer;

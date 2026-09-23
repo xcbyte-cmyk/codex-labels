@@ -43,6 +43,25 @@ class WindowsHelperTests(unittest.TestCase):
         with patch.object(helper, 'installed_sources', return_value=[self.source]):
             self.assertEqual(helper.find_source(), self.source.resolve())
 
+    def test_helper_started_inside_runtime_restarts_from_install_root(self):
+        # The app's working directory is runtime/app; Windows cannot rename a
+        # directory that is any process's current directory.
+        helper.prepare(self.root, self.source)
+        argv = ['windows_helper.py', 'launch', '--root', str(self.root), '--wait-pid', '12', '--restart-token', 'a'*32]
+        with patch.object(helper.Path, 'cwd', return_value=self.root/'runtime/app'), \
+                patch.object(helper.sys, 'argv', argv), \
+                patch.object(helper.subprocess, 'Popen') as spawn, patch.object(helper, 'launch') as launch:
+            self.assertEqual(helper.main(), 0)
+        launch.assert_not_called()
+        command, options = spawn.call_args.args[0], spawn.call_args.kwargs
+        self.assertEqual(command[-len(argv[1:]):], argv[1:])
+        self.assertEqual(options['cwd'], self.root.resolve())
+        self.assertEqual(options['env']['PYINSTALLER_RESET_ENVIRONMENT'], '1')
+        with patch.object(helper.Path, 'cwd', return_value=self.root), \
+                patch.object(helper.subprocess, 'Popen') as spawn:
+            self.assertFalse(helper.relocate_from_runtime(self.root.resolve()))
+        spawn.assert_not_called()
+
     def test_payload_fingerprint_matches_packaged_files_only(self):
         digest = hashlib.sha256()
         for name in PAYLOAD:

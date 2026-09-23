@@ -608,6 +608,27 @@ def open_accounts(root):
         describe_account=describe, close_on_launch=True)
 
 
+# Actions that may rename runtime/app. The app starts the helper with its own
+# working directory (runtime/app); a process's current directory cannot be
+# renamed on Windows, and the one-file bootloader keeps it for its lifetime.
+RELOCATED_ACTIONS = {'launch', 'launch-direct', 'accounts', 'prepare', 'rollback'}
+
+
+def relocate_from_runtime(root):
+    """Restart this helper outside runtime/ when started inside it; True if restarted."""
+    try:
+        inside = Path.cwd().resolve().is_relative_to(root/'runtime')
+    except OSError:
+        inside = False
+    if not inside:
+        return False
+    command = [sys.executable, *sys.argv[1:]] if getattr(sys, 'frozen', False) else [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
+    env = {key: value for key, value in os.environ.items() if not key.startswith('_PYI_')}
+    env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+    subprocess.Popen(command, cwd=root, env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    return True
+
+
 def main():
     if sys.argv[1:2] == ['auto-accounts']:
         from automatic_accounts import main as accounts_main
@@ -633,6 +654,8 @@ def main():
     if args.action == 'prepare' and args.shortcut and not args.no_ui:
         args.action = 'launch'
     root = args.root.resolve()
+    if args.action in RELOCATED_ACTIONS and relocate_from_runtime(root):
+        return 0
     try:
         if sys.platform != 'win32':
             raise RuntimeError('Windows x64 PC에서 실행하세요.')
