@@ -102,7 +102,7 @@ test('real directory watcher notices another store instance atomic writes',async
 });
 test('preload invalidation subscription strips native event/payload and unregisters exactly its listener',()=>{
   let api;const events=new Map();
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'preload.js'),'utf8'),{require:()=>({contextBridge:{exposeInMainWorld:(_n,a)=>api=a},ipcRenderer:{on:(n,f)=>events.set(n,f),removeListener:(n,f)=>{assert.equal(events.get(n),f);events.delete(n);}}})});
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'preload.js'),'utf8'),{require:()=>({contextBridge:{exposeInMainWorld:(name,a)=>{if(name==='codexLabels')api=a;}},ipcRenderer:{on:(n,f)=>events.set(n,f),removeListener:(n,f)=>{assert.equal(events.get(n),f);events.delete(n);}}})});
   let received;const off=api.onVocabularyChanged((...args)=>received=args);
   events.get('codex-labels:vocabulary-changed')({sender:'native'},{secret:'must not cross'});assert.deepEqual(received,[]);off();assert.equal(events.size,0);assert.throws(()=>api.onVocabularyChanged(null),/callback/);
 });

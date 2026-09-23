@@ -13,7 +13,7 @@ import prepare_runtime as builder
 from windows_helper import HELPER_NAME, VERSION
 
 ROOT = Path(__file__).resolve().parent
-PAYLOAD = ['labels.example.json', 'prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py'] + [
+PAYLOAD = ['labels.example.json', 'prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'automatic_accounts.py', 'automatic_accounts_ui.py'] + [
     'extension/' + name for name in ['main.cjs', 'preload.js', 'store.cjs', 'renderer.js', *builder.EXTRA_EXTENSION_FILES]]
 
 

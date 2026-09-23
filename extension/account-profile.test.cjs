@@ -17,12 +17,13 @@ function fixture(t, id = 'a'.repeat(32)) {
 test('account bootstrap isolates identity before upstream startup', t => {
   const {root, id, directory} = fixture(t);
   const env = {PATH:'keep', CODEX_HOME:'parent', CODEX_SQLITE_HOME:'parent', OPENAI_API_KEY:'secret',
-    CODEX_APP_SERVER_WS_URL:'ws://parent', CODEX_ACCESS_TOKEN:'secret', CODEX_LABELS_LAUNCH_TOKEN:'token'};
+    CODEX_APP_SERVER_WS_URL:'ws://parent', CODEX_APP_SERVER_FORCE_CLI:'1',
+    CODEX_ACCESS_TOKEN:'secret', CODEX_LABELS_LAUNCH_TOKEN:'token'};
   const result = resolveAccount(root, ['app', '--codex-labels-account='+id], env);
   assert.equal(result.directory, directory);
   assert.equal(env.CODEX_HOME, path.join(directory, 'codex-home'));
   assert.equal(env.CODEX_SQLITE_HOME, env.CODEX_HOME);
-  assert.equal(env.CODEX_APP_SERVER_FORCE_CLI, '1');
+  assert.equal(env.CODEX_APP_SERVER_FORCE_CLI, undefined);
   assert.equal(env.CODEX_LABELS_LAUNCH_TOKEN, 'token');
   assert.equal(env.OPENAI_API_KEY, undefined); assert.equal(env.CODEX_APP_SERVER_WS_URL, undefined);
   assert.equal(env.CODEX_ACCESS_TOKEN, undefined);

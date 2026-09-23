@@ -19,13 +19,15 @@ class AccountProfilesTests(unittest.TestCase):
     def test_separate_homes_profiles_and_credentials_are_not_copied(self):
         a, b = profiles.create(self.root, '회사 A'), profiles.create(self.root, '개인 B')
         inherited = {'PATH': 'keep', 'CODEX_HOME': 'old', 'CODEX_SQLITE_HOME': 'shared',
-                     'CODEX_APP_SERVER_WS_URL': 'ws://old', 'CODEX_ACCESS_TOKEN': 'secret',
+                     'CODEX_APP_SERVER_WS_URL': 'ws://old', 'CODEX_APP_SERVER_FORCE_CLI': '1',
+                     'CODEX_ACCESS_TOKEN': 'secret',
                      'OPENAI_API_KEY': 'secret', 'ELECTRON_RUN_AS_NODE': '1', '_PYI_HOME': 'temp'}
         _, da, pa, ea = profiles.launch_context(self.root, a['id'], inherited)
         _, db, pb, eb = profiles.launch_context(self.root, b['id'], inherited)
         self.assertNotEqual(pa, pb); self.assertNotEqual(ea['CODEX_HOME'], eb['CODEX_HOME'])
         self.assertEqual(ea['PATH'], 'keep')
-        for key in ('CODEX_APP_SERVER_WS_URL', 'CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'ELECTRON_RUN_AS_NODE', '_PYI_HOME'):
+        for key in ('CODEX_APP_SERVER_WS_URL', 'CODEX_APP_SERVER_FORCE_CLI', 'CODEX_ACCESS_TOKEN',
+                    'OPENAI_API_KEY', 'ELECTRON_RUN_AS_NODE', '_PYI_HOME'):
             self.assertNotIn(key, ea)
         self.assertFalse((da/'codex-home/auth.json').exists())
         (da/'codex-home/auth.json').write_text('private A')

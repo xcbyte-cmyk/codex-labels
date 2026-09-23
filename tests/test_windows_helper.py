@@ -1,4 +1,5 @@
 """Synthetic per-PC installation, rollback and launch contract tests."""
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -8,9 +9,20 @@ from unittest.mock import patch, Mock
 
 from test_prepare_runtime import builder, write_archive
 import windows_helper as helper
+from package_windows import PAYLOAD
 
 
 class WindowsHelperTests(unittest.TestCase):
+    def test_legacy_account_entry_opens_unified_desktop_picker(self):
+        import account_manager
+        with patch.object(helper.account_profiles, 'shared_root', return_value=self.base/'shared'), \
+                patch.object(account_manager, 'run', return_value=0) as manager, \
+                patch.object(helper, 'launch_account', return_value={'status': 'active'}) as launch:
+            self.assertEqual(helper.open_accounts(self.root), 0)
+            options = manager.call_args.kwargs
+            options['switch_account'](self.base/'shared', 'a'*32)
+        launch.assert_called_once_with(self.root, 'a'*32, shared=True, open_account_picker=True)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='labels-helper-')
         self.addCleanup(temporary.cleanup)
@@ -29,6 +41,14 @@ class WindowsHelperTests(unittest.TestCase):
         with patch.object(helper, 'installed_sources', return_value=[self.source]):
             self.assertEqual(helper.find_source(), self.source.resolve())
 
+    def test_payload_fingerprint_matches_packaged_files_only(self):
+        digest = hashlib.sha256()
+        for name in PAYLOAD:
+            source = helper.ASSETS/name
+            digest.update(source.name.encode())
+            digest.update(source.read_bytes())
+        self.assertEqual(helper.payload_fingerprint(), digest.hexdigest())
+
     def test_unsupported_source_does_not_create_output(self):
         write_archive(self.source/'resources/app.asar', {'package.json': b'{"version":"new-version"}'})
         with patch.object(helper, 'installed_sources', return_value=[self.source]):
@@ -45,6 +65,33 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(helper.require_ready(self.root), self.root.resolve()/'runtime/app/ChatGPT.exe')
         self.assertEqual((self.source/'resources/app.asar').read_bytes(), before)
         self.assertFalse(helper.read_receipt(self.root)['liveAppActivated'])
+
+    def test_check_and_prepare_refresh_existing_runtime_after_official_upgrade(self):
+        helper.prepare(self.root, self.source)
+        write_archive(self.source/'resources/app.asar', {'package.json': b'{"version":"27.100.1"}'})
+        with patch.object(helper, 'installed_sources', return_value=[self.source]), \
+                patch('builtins.print') as output, \
+                patch.object(helper.sys, 'argv', ['windows_helper.py', 'check', '--root', str(self.root)]):
+            self.assertEqual(helper.main(), 0)
+        checked = json.loads(output.call_args.args[0])
+        self.assertTrue(checked['ready'])
+        self.assertEqual(checked['source'], str(self.root.resolve()/'runtime/app'))
+
+        self.mark_old_payload()
+        with patch.object(helper, 'installed_sources', return_value=[self.source]), \
+                patch('builtins.print') as output, \
+                patch.object(helper.sys, 'argv', ['windows_helper.py', 'prepare', '--root', str(self.root), '--no-ui']):
+            self.assertEqual(helper.main(), 0)
+        prepared = json.loads(output.call_args.args[0])
+        self.assertTrue(prepared['ready'])
+        self.assertTrue(Path(prepared['backup']).is_dir())
+        self.assertEqual(helper.read_receipt(self.root)['helperPayloadSha256'], helper.payload_fingerprint())
+
+    def test_explicit_source_is_not_replaced_by_existing_runtime(self):
+        helper.prepare(self.root, self.source)
+        write_archive(self.source/'resources/app.asar', {'package.json': b'{"version":"27.100.1"}'})
+        with self.assertRaisesRegex(ValueError, 'Unsupported'):
+            helper.preparation_source(self.root, self.source)
 
     def test_update_preserves_personal_settings_and_keeps_backup(self):
         helper.prepare(self.root, self.source)

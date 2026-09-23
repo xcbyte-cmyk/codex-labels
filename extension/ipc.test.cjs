@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const {createSnapshotCache} = require('./snapshot-cache.cjs');
 function mainHarness(t, account = null) {
   const handlers = new Map(), calls = [], paths = [], windows = [], sent = [];
-  let changed, cache, reads = 0;
+  let changed, cache, reads = 0, switcherOptions;
   let snapshot = {configRevision: 'initial', configError: null, config: {}, assignments: {}};
   const store = {configPath: '/config', snapshot: () => { reads++; return snapshot; },
     assign: (key, id) => (snapshot = {...snapshot, assignments: {[key]: id}}),
@@ -23,7 +23,7 @@ function mainHarness(t, account = null) {
   };
   const writes = [];
   const mockFs = {mkdirSync() {}, writeFileSync: (file, value) => writes.push({file, value}), renameSync() {}, unlinkSync() {},
-    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : '/* labels */'};
+    readFileSync: file => file.endsWith('notification-renderer.js') ? '/* notification */' : file.endsWith('vocabulary-renderer.js') ? '/* vocabulary */' : file.endsWith('auto-account-renderer.js') ? '/* auto accounts */' : '/* labels */'};
   const dirname = path.resolve('fixture', '.vite', 'build');
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'main.cjs'), 'utf8'), {
     __dirname: dirname, process: {platform: 'win32', env: {LOCALAPPDATA: path.resolve('fixture', 'Local')},
@@ -33,6 +33,7 @@ function mainHarness(t, account = null) {
       if (name === 'electron') return {app, ipcMain: {handle: (channel, fn) => handlers.set(channel, fn)},
         shell: {openPath: async () => ''}, BrowserWindow: {getAllWindows: () => windows, fromWebContents: content => windows.find(w => w.webContents === content)}, Notification: {}};
       if (name === 'node:fs') return mockFs;
+      if (name === './codex-labels/auto-account-main.cjs') return {install: options => { switcherOptions = options; return {dispose(){}}; }};
       if (name === './codex-labels-store.cjs') return {createStore: () => store};
       if (name === './codex-labels/vocabulary-ipc.cjs') return {registerVocabulary: () => ({dispose(){}})};
       if (name === './codex-labels/snapshot-cache.cjs') return {createSnapshotCache: (value, directory, options) => {
@@ -54,7 +55,7 @@ function mainHarness(t, account = null) {
       getLastWebPreferences: () => ({preload: trustedPreload ? path.join(dirname, 'preload.js') : 'foreign-preload.js'})});
     return {sender: contents, senderFrame: contents.mainFrame};
   }
-  return {handlers, calls, paths, event, app, windows, sent, writes, changed: () => changed(), cache, get reads() { return reads; }};
+  return {handlers, calls, paths, event, app, windows, sent, writes, switcherOptions, changed: () => changed(), cache, get reads() { return reads; }};
 }
 test('account onboarding reports UI readiness without pretending login succeeded', async t => {
   const account = {id:'a'.repeat(32), name:'회사 A', directory:path.resolve('fixture','account'), home:path.resolve('fixture','home')};
@@ -63,7 +64,7 @@ test('account onboarding reports UI readiness without pretending login succeeded
   contents.executeJavaScript = async script => { assert.ok(script.includes('codex-labels-account-name')); };
   const window = new EventEmitter(); Object.assign(window, {webContents:contents, isDestroyed:()=>false, setTitle:value=>{title=value;}});
   h.windows.push(window);
-  h.app.emit('web-contents-created', {}, contents); contents.emit('did-finish-load');
+  h.app.emit('web-contents-created', {}, contents); contents.emit('dom-ready');
   await new Promise(resolve => setTimeout(resolve, 130));
   assert.equal(title, 'Codex Labels · 회사 A');
   const report = h.writes.map(w => {try{return JSON.parse(w.value);}catch{return null;}}).find(v => v?.accountWindowReady);
@@ -134,17 +135,19 @@ test('notification capture source is injected before legacy stopImmediatePropaga
   const h = mainHarness(t), event = h.event(); let source;
   event.sender.executeJavaScript = async value => { source = value; };
   h.app.emit('web-contents-created', {}, event.sender);
-  event.sender.emit('did-finish-load');
-  assert.equal(source, '/* notification */\n/* vocabulary */\n/* labels */');
+  event.sender.emit('dom-ready');
+  assert.equal(source, '/* notification */\n/* vocabulary */\n/* auto accounts */\n/* labels */');
 });
 test('preload subscriptions hide the native event and return an unsubscribe function', () => {
-  let api, removed;
+  let removed; const exposed = new Map();
   const listeners = new Map(), invokes = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8'), {
-    require: () => ({contextBridge: {exposeInMainWorld: (_name, value) => { api = value; }},
+    require: () => ({contextBridge: {exposeInMainWorld: (name, value) => { assert.equal(exposed.has(name), false); exposed.set(name, value); }},
       ipcRenderer: {invoke: (...args) => { invokes.push(args); return Promise.resolve(); }, on: (channel, fn) => { listeners.set(channel, fn); },
         removeListener: (channel, fn) => { removed = fn; if (listeners.get(channel) === fn) listeners.delete(channel); }}})
   });
+  const api = exposed.get('codexLabels');
+  assert.equal(exposed.has('codexSessionSwitcher'), false);
   let args; const unsubscribe = api.onActivateThread((...values) => { args = values; });
   const listener = listeners.get('codex-labels:activate-thread');
   const value = {threadId: 't'}; listener({sender: 'must not leak'}, value);
@@ -158,4 +161,31 @@ test('preload subscriptions hide the native event and return an unsubscribe func
   api.read('known-version'); api.read();
   assert.deepEqual(invokes, [['codex-labels:read', 'known-version'], ['codex-labels:read', undefined]]);
   assert.equal(api.ipcRenderer, undefined);
+});
+
+test('automatic accounts uses a fixed launcher without an account proxy', t => {
+  const h = mainHarness(t);
+  assert.equal(h.switcherOptions.enabled, true);
+  assert.equal(h.switcherOptions.root, path.resolve('fixture', 'config'));
+  assert.equal(typeof h.switcherOptions.check, 'function');
+  assert.equal([...h.handlers.keys()].some(name => name.includes('session-switcher')), false);
+  assert.equal(h.app.listenerCount('before-quit'), 0);
+});
+
+test('the preload contains only the original Labels bridge, no authentication API', () => {
+  const exposed = new Map(), invoked = [];
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8'), {
+    require: name => {
+      assert.equal(name, 'electron');
+      return {contextBridge: {exposeInMainWorld: (n, v) => exposed.set(n, v)},
+        ipcRenderer: {invoke: (...args) => invoked.push(args)}};
+    }
+  });
+  assert.deepEqual([...exposed.keys()], ['codexLabels']);
+  assert.equal(invoked.length, 0);
+  exposed.get('codexLabels').openAutomaticAccounts();
+  assert.deepEqual(invoked, [['codex-labels:auto-accounts-open']]);
+  assert.equal(exposed.get('codexLabels').switchAccount, undefined);
+  assert.equal(exposed.get('codexLabels').login, undefined);
+  assert.equal(exposed.get('codexLabels').logout, undefined);
 });

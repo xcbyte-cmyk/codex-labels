@@ -142,7 +142,7 @@ test('IPC allows bounded preview edits, consumes draft only after a successful s
 test('preload forwards only named vocabulary save/edit channels and arguments',()=>{
   const vm=require('node:vm'),calls=[];let exposed;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'preload.js'),'utf8'),{require:name=>{
-    assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value;}},ipcRenderer:{invoke:(...args)=>{calls.push(args);}}};
+    assert.equal(name,'electron');return {contextBridge:{exposeInMainWorld:(name,value)=>{if(name==='codexLabels')exposed=value;}},ipcRenderer:{invoke:(...args)=>{calls.push(args);}}};
   }});
   const options={mode:'add',edits:{meaning:'뜻'}};exposed.vocabularySave('id','rev',options);exposed.vocabularyEdit('id',{favorite:true},'rev');
   assert.deepEqual(calls,[['codex-labels:vocabulary-save','id','rev',options],['codex-labels:vocabulary-edit','id',{favorite:true},'rev']]);

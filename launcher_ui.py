@@ -53,7 +53,7 @@ def run(operation):
                     message.set('업데이트를 완료하지 못해 이전 버전으로 열었습니다.\n' + value['updateError'])
                     ttk.Button(actions, text='닫기', command=close).pack(side='right')
                 else:
-                    message.set('계정 선택기를 열고 있습니다…' if value.get('selectorReady') else 'Codex Labels가 열렸습니다.')
+                    message.set('계정 전환을 열고 있습니다…' if value.get('selectorReady') else 'Codex Labels가 열렸습니다.')
                     window.after(50 if value.get('selectorReady') else 1000, window.destroy)
             else:
                 state['working'] = False

@@ -2,6 +2,7 @@
 (() => {
   const {contextBridge, ipcRenderer} = require('electron');
   contextBridge.exposeInMainWorld('codexLabels', {
+    openAutomaticAccounts: () => ipcRenderer.invoke('codex-labels:auto-accounts-open'),
     vocabularyRead: () => ipcRenderer.invoke('codex-labels:vocabulary-read'),
     onVocabularyChanged: callback => {
       if(typeof callback !== 'function') throw new TypeError('callback must be a function');

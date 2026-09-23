@@ -43,7 +43,7 @@ function resolveAccount(root, argv = process.argv, env = process.env) {
     if (/^(CODEX_|OPENAI_|AZURE_OPENAI_|CHATGPT_|ELECTRON_)/i.test(key) && !['CODEX_LABELS_LAUNCH_TOKEN'].includes(key)) delete env[key];
   }
   Object.assign(env, {CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_ELECTRON_USER_DATA_PATH: profile,
-    CODEX_APP_SERVER_FORCE_CLI: '1', CODEX_LABELS_ACCOUNT_ID: id});
+    CODEX_LABELS_ACCOUNT_ID: id});
   return {id, name: data.name, directory, home, profile};
 }
 

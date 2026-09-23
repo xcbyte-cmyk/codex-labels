@@ -17,7 +17,7 @@ SUPPORTED_APP_VERSION = '26.915.31945'
 ACTIVITY_BUNDLE = 'webview/assets/app-initial-6c4523b43a11.js'
 ACTIVITY_CONTROLLER = 'ep(o,n)'
 ACTIVITY_COORDINATION = 'yU.clientCoordination'
-EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js')
+EXTRA_EXTENSION_FILES = ('notification-core.cjs', 'notifications.cjs', 'snapshot-cache.cjs', 'notification-renderer.js', 'windows-shortcuts.cjs', 'activity-sync.cjs', 'updates.cjs', 'account-profile.cjs', 'vocabulary.cjs', 'vocabulary-ipc.cjs', 'vocabulary-renderer.js', 'auto-account-renderer.js', 'auto-account-main.cjs')
 MAX_HEADER_BYTES = 64 * 1024 * 1024
 
 
@@ -66,6 +66,12 @@ def build_asar(source, target, config_directory, extra=None, *, refresh=False):
             header, base = read_index(src)
             original = dict(entries(copy.deepcopy(header)))
             archive_size = source.stat().st_size
+            # Historical experimental builds can still exist on a user's PC.
+            # Keep this guard even though those modules are no longer shipped.
+            if refresh and any(name.startswith('.vite/build/codex-labels/session-switcher/') or
+                               name == '.vite/build/codex-labels/session-switcher-renderer.js'
+                               for name in original):
+                raise RuntimeError('Rebuild a separate candidate from the original Codex installation; do not refresh an experimental switcher runtime.')
 
             def read(name):
                 item = original[name]

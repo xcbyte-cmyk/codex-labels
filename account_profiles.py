@@ -107,6 +107,6 @@ def launch_context(root, account_id, inherited=None):
         if upper.startswith(('CODEX_', 'OPENAI_', 'AZURE_OPENAI_', '_PYI_', 'ELECTRON_', 'CHATGPT_')) or upper in ('NODE_OPTIONS', 'NODE_PATH'):
             del env[key]
     env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
-               CODEX_ELECTRON_USER_DATA_PATH=str(profile), CODEX_APP_SERVER_FORCE_CLI='1',
+               CODEX_ELECTRON_USER_DATA_PATH=str(profile),
                CODEX_LABELS_ACCOUNT_ID=account_id, CODEX_LABELS_LAUNCH_TOKEN=uuid.uuid4().hex)
     return value, directory, profile, env

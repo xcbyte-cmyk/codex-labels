@@ -14,8 +14,10 @@ const accountProfile = resolveAccount(installedConfigDirectory);
 // after account environment selection, before the upstream bootstrap runs.
 if (process.platform === 'win32') {
   process.env.CODEX_CLI_PATH = path.join(process.resourcesPath, 'codex.exe');
-  process.env.CODEX_APP_SERVER_FORCE_CLI = '1';
 }
+// Native relogin is renderer-only. Do not intercept app-server startup,
+// stdin/stdout, authentication, or per-connection lifetime here.
+
 const windowTitle = accountProfile ? `Codex Labels · ${accountProfile.name}` : 'Codex Labels';
 // Installer smoke uses a fresh config, profile and CODEX_HOME, never account data.
 const smokeDirectory = process.env.CODEX_LABELS_SMOKE_DIRECTORY;
@@ -33,6 +35,12 @@ if (process.platform === 'win32') {
   process.env.CODEX_ELECTRON_USER_DATA_PATH = profile;
   app.setPath('userData', profile);
 }
+// Registered-account handoff helper; no app-server traffic interception.
+const automaticAccounts = require('./codex-labels/auto-account-main.cjs').install({
+  app, ipcMain, check, root: installedConfigDirectory,
+  home: accountProfile?.home || process.env.CODEX_HOME || path.join(app.getPath('home'), '.codex'),
+  profile, profileId: accountProfile?.id || null, enabled: !smokeDirectory
+});
 const store = createStore(configDirectory);
 const cache = createSnapshotCache(store, configDirectory, {onChange: broadcastConfigChange});
 const {registerVocabulary} = require('./codex-labels/vocabulary-ipc.cjs');
@@ -147,6 +155,7 @@ ipcMain.handle('codex-labels:activation-ack', (event, eventId, result) => {
 // Register capture handlers before the label renderer's stopImmediatePropagation.
 const source = fs.readFileSync(path.join(__dirname, 'codex-labels/notification-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels/vocabulary-renderer.js'), 'utf8') + '\n' +
+  fs.readFileSync(path.join(__dirname, 'codex-labels/auto-account-renderer.js'), 'utf8') + '\n' +
   fs.readFileSync(path.join(__dirname, 'codex-labels-renderer.js'), 'utf8') + (accountProfile ? `\n(() => {
     if (document.getElementById('codex-labels-account-name')) return;
     const badge = document.createElement('div'); badge.id = 'codex-labels-account-name';
@@ -161,7 +170,8 @@ app.on('web-contents-created', (_event, contents) => {
     if (mainFrame && !inPlace) notifications.disconnected(contents);
   });
   contents.once('destroyed', () => notifications.disconnected(contents));
-  contents.on('did-finish-load', () => {
+  // Install as soon as the DOM is usable, before slow page resources finish.
+  contents.on('dom-ready', () => {
     if (!trustedContent(contents)) return;
     const window = BrowserWindow.fromWebContents(contents);
     if (window && !window.isDestroyed()) {

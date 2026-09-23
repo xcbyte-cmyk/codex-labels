@@ -105,9 +105,11 @@ def preparation_lock(root):
 
 def payload_fingerprint():
     digest = hashlib.sha256()
-    files = [ASSETS/name for name in ('prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'labels.example.json')]
-    files += sorted((ASSETS/'extension').glob('*.js'))
-    files += sorted(path for path in (ASSETS/'extension').glob('*.cjs') if not path.name.endswith('.test.cjs'))
+    files = [ASSETS/name for name in ('labels.example.json', 'prepare_runtime.py', 'windows_helper.py', 'updater.py', 'launcher_ui.py', 'runtime_recovery.py', 'account_profiles.py', 'account_manager.py', 'account_cleanup.py', 'automatic_accounts.py', 'automatic_accounts_ui.py')]
+    # Match package_windows.PAYLOAD exactly. Development-only legacy modules
+    # must not change the installed helper's runtime fingerprint.
+    files += [ASSETS/'extension'/name for name in
+              ('main.cjs', 'preload.js', 'store.cjs', 'renderer.js', *builder.EXTRA_EXTENSION_FILES)]
     for file in files:
         digest.update(file.name.encode()); digest.update(file.read_bytes())
     return digest.hexdigest()
@@ -157,6 +159,13 @@ def valid_runtime(root, target):
                 and builder.file_hash(target/'resources/app.asar') == receipt.get('patchedAsarSha256'))
     except (OSError, ValueError, TypeError):
         return False
+
+
+def preparation_source(root, explicit=None):
+    """Refresh a verified local runtime unless the caller chose an official source."""
+    if explicit is None and valid_runtime(root, Path(root)/'runtime/app'):
+        return None
+    return find_source(explicit)
 
 
 def recover_runtime(root):
@@ -430,7 +439,7 @@ def delete_account(root, account_id, *, progress=None, shared=False):
             stop=lambda data, key: account_cleanup.stop_account(data, key, runtime_root=root))
 
 
-def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=False):
+def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=False, open_account_picker=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     # Account windows never silently fall back to the default launcher or an
@@ -451,6 +460,7 @@ def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=F
         process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile),
             '--codex-labels-account=' + account_id,
             *(['--codex-labels-account-protocol=1'] if shared else []),
+            *(['--codex-labels-open-accounts'] if open_account_picker else []),
             '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
             env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         process.labels_launch_token = env['CODEX_LABELS_LAUNCH_TOKEN']
@@ -465,7 +475,7 @@ def launch_account(root, account_id, *, progress=None, wait_ready=True, shared=F
         return status
 
 
-def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False, select_accounts=False):
+def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False, skip_update=False, select_accounts=False, open_account_picker=False):
     root = Path(root).resolve()
     progress = progress or (lambda *_: None)
     progress('설치 상태를 확인하고 있습니다', 5)
@@ -489,7 +499,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
             if (root/'runtime/app/ChatGPT.exe').resolve() in running_apps():
                 raise RuntimeError('실행 중인 Labels의 라벨 설정에서 설치하고 다시 실행을 눌러 주세요. 처음 적용할 때는 기존 Labels를 완전히 종료해 주세요.')
             try:
-                base = None if source is None and valid_runtime(root, root/'runtime/app') else find_source(source)
+                base = preparation_source(root, source)
                 prepare(root, base, progress, verify_runtime=getattr(sys, 'frozen', False))
                 exe = require_ready(root)
             except Exception as error:
@@ -504,7 +514,7 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     if shortcut:
         create_shortcut(root)
     if select_accounts:
-        progress('계정 선택기를 준비했습니다', 100)
+        progress('계정 전환을 준비했습니다', 100)
         return {'selectorReady': True, 'updateError': update_error}
     existing = running_apps()
     if any(app != exe.resolve() for app in existing):
@@ -525,7 +535,8 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
     if wait_ready and not skip_update:
         recovery.attempted(root)
     try:
-        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN']], cwd=exe.parent,
+        process = subprocess.Popen([str(exe), '--user-data-dir=' + str(profile), '--codex-labels-launch-token=' + env['CODEX_LABELS_LAUNCH_TOKEN'],
+            *(['--codex-labels-open-accounts'] if open_account_picker else [])], cwd=exe.parent,
             env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except OSError as error:
         saved = recovery.state(root)
@@ -557,15 +568,28 @@ def launch(root, *, progress=None, wait_ready=False, source=None, shortcut=False
 
 def open_accounts(root):
     import account_manager
+    from automatic_accounts import AccountError, Credential, read_private
     data_root = account_profiles.shared_root()
+    def describe(key):
+        try:
+            auth = account_profiles.account_path(data_root, key)/'codex-home'/'auth.json'
+            credential = Credential.parse(read_private(auth))
+            return credential.email or credential.public()['accountSuffix']
+        except (AccountError, OSError, ValueError):
+            return '로그인 필요'
     return account_manager.run(data_root,
         lambda _, key, **kw: launch_account(root, key, shared=True, **kw),
         lambda _, key, **kw: delete_account(root, key, shared=True, **kw),
         launch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, **kw),
-        close_on_launch=True)
+        switch_account=lambda _, key, **kw: launch_account(root, key, shared=True, open_account_picker=True, **kw),
+        switch_default=lambda **kw: launch(root, wait_ready=True, skip_update=True, open_account_picker=True, **kw),
+        describe_account=describe, close_on_launch=True)
 
 
 def main():
+    if sys.argv[1:2] == ['auto-accounts']:
+        from automatic_accounts import main as accounts_main
+        return accounts_main(sys.argv[2:])
     if sys.stdout:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Codex Labels Windows 설치·실행 도구')
@@ -644,7 +668,8 @@ def main():
                         raise RuntimeError('이 PC의 공식 Codex 설치본을 찾지 못했습니다.')
                     result = updater.stage(root, VERSION, versions)
         elif args.action == 'check':
-            source = find_source(args.source)
+            base = preparation_source(root, args.source)
+            source = root/'runtime/app' if base is None else base
             try:
                 require_ready(root); ready = True
             except RuntimeError:
@@ -653,8 +678,8 @@ def main():
                 'source': str(source), 'root': str(root), 'ready': ready, 'originalInstallModified': False}
         elif args.action == 'prepare':
             with preparation_lock(root):
-                print('공식 Codex를 확인하고 라벨 기능을 준비하고 있습니다. 잠시 기다려 주세요.', flush=True)
-                result = prepare(root, find_source(args.source))
+                print('Codex 실행본을 확인하고 라벨 기능을 준비하고 있습니다. 잠시 기다려 주세요.', flush=True)
+                result = prepare(root, preparation_source(root, args.source))
                 if args.shortcut:
                     result['shortcut'] = create_shortcut(root)
             print('준비 완료. 다음부터 실행.cmd 또는 바탕화면 바로가기를 사용하세요.', flush=True)

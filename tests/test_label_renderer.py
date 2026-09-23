@@ -672,6 +672,42 @@ class LabelRendererTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('fixture.reads.length'), after_cleanup)
         self.assertEqual(self.badge('after-close').count(), 0)
 
+    def test_hidden_start_primes_snapshot_but_defers_later_updates(self):
+        self.page.evaluate("""() => {
+            window.fixtureHidden = true;
+            Object.defineProperty(document, 'hidden', {get: () => fixtureHidden});
+        }""")
+        self.start()
+        self.assertEqual(self.page.evaluate('fixture.reads.length'), 1)
+        self.page.evaluate("""() => {
+            fixture.assign({'thread:local:local:first': 'completed'});
+            fixture.emit(); window.dispatchEvent(new Event('focus'));
+        }""")
+        self.settle()
+        self.assertEqual(self.page.evaluate('fixture.reads.length'), 1)
+        self.page.evaluate("""() => {
+            fixtureHidden = false; document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        self.page.wait_for_function("document.querySelector('#first .cdx-label').textContent === '완료'")
+        self.assertEqual(self.page.evaluate('fixture.maxActiveReads'), 1)
+
+    def test_hidden_start_with_slow_read_remains_serialized(self):
+        self.page.evaluate("""() => {
+            window.fixtureHidden = true;
+            Object.defineProperty(document, 'hidden', {get: () => fixtureHidden});
+            fixture.nextReadHeld = true; addRow('first');
+        }""")
+        self.page.add_script_tag(content=self.source)
+        self.page.wait_for_function('typeof fixture.releaseRead === "function"')
+        self.page.evaluate("""() => {
+            window.dispatchEvent(new Event('focus'));
+            fixture.emit(); fixture.emit(); fixture.releaseRead();
+        }""")
+        self.badge().wait_for()
+        self.settle()
+        self.assertEqual(self.page.evaluate('fixture.reads.length'), 1)
+        self.assertEqual(self.page.evaluate('fixture.maxActiveReads'), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
