@@ -11,13 +11,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import prepare_runtime as builder
 
 
+ACTIVITY_BUNDLE = 'webview/assets/app-initial-0a1b2c3d.js'
+# Minified shape shared by Codex 26.915 and 26.917 with different local names.
+ACTIVITY_SOURCE = (b'async function boot(){$S=await Hx.services}'
+    b'function cached(){return t.delete(n),wd(o,n).observeCatalogThreads(e)}'
+    b'function live(){if(x){t.set(n,r);return}wd(o,n).observeCatalogThreads(r)}'
+    b'function coordinate(){return $S.clientCoordination}')
+
+
 def write_archive(path, files, activity=True):
     files = dict(files)
     if activity:
-        controller = builder.ACTIVITY_CONTROLLER.encode()
-        files.setdefault(builder.ACTIVITY_BUNDLE,
-            b'function cached(){' + controller + b'.observeCatalogThreads(e)};function live(){' +
-            controller + b'.observeCatalogThreads(r)}')
+        files.setdefault(ACTIVITY_BUNDLE, ACTIVITY_SOURCE)
     header = {'files': {}}
     offset = 0
     for name, data in files.items():
@@ -54,7 +59,7 @@ class BuildTests(unittest.TestCase):
         self.source = self.root/'installed'
         self.archive = self.source/'resources/app.asar'
         self.files = {
-            'package.json': json.dumps({'version': builder.SUPPORTED_APP_VERSION}).encode(),
+            'package.json': json.dumps({'version': builder.VERIFIED_APP_VERSION}).encode(),
             '.vite/build/early-bootstrap.js': b'/* synthetic bootstrap */',
             '.vite/build/preload.js': b'/* synthetic preload */',
             'unchanged.txt': b'untouched\x00payload',
@@ -89,23 +94,67 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(entry['integrity']['hash'], hashlib.sha256(data).hexdigest())
             self.assertEqual(entry['size'], len(data))
 
-    def test_activity_hook_is_version_checked_and_never_resumes_tasks(self):
+    def test_activity_hook_is_discovered_and_never_resumes_tasks(self):
         target = self.root/'patched.asar'
         builder.build_asar(self.archive, target, self.root/'settings')
-        content=read_archive(target)[builder.ACTIVITY_BUNDLE][0]
+        content=read_archive(target)[ACTIVITY_BUNDLE][0]
         self.assertIn(b'retainActiveConversation', content)
         self.assertNotIn(b'resumeConversation', content)
         self.assertEqual(content.count(b'__codexLabelsActivitySync.observe(n,'), 2)
-        self.files[builder.ACTIVITY_BUNDLE]=b'upstream changed'
-        write_archive(self.archive,self.files)
-        with self.assertRaisesRegex(RuntimeError,'Unsupported activity catalog hook'):
-            builder.build_asar(self.archive,self.root/'bad.asar',self.root)
+        self.assertIn(b'observeCatalogThreads(e),globalThis.__codexLabelsActivitySync.observe(n,e,wd(o,n),$S.clientCoordination)', content)
+        self.assertIn(b'observeCatalogThreads(r),globalThis.__codexLabelsActivitySync.observe(n,r,wd(o,n),$S.clientCoordination)', content)
+
+    def test_unknown_or_ambiguous_activity_shape_skips_only_the_optional_hook(self):
+        for source in (b'upstream changed', ACTIVITY_SOURCE + b';function extra(){wd(o,n).observeCatalogThreads(z)}',
+                       ACTIVITY_SOURCE.replace(b'$S=await Hx.services', b'')):
+            self.files[ACTIVITY_BUNDLE] = source
+            write_archive(self.archive, self.files)
+            target = self.root/'patched.asar'
+            changed = builder.build_asar(self.archive, target, self.root)
+            self.assertNotIn(ACTIVITY_BUNDLE, changed)
+            result = read_archive(target)
+            self.assertEqual(result[ACTIVITY_BUNDLE][0], source)
+            self.assertTrue(result['.vite/build/early-bootstrap.js'][0].startswith(builder.MARKER))
+
+    def test_missing_activity_bundle_still_builds_labels(self):
+        write_archive(self.archive,self.files,activity=False)
+        changed = builder.build_asar(self.archive,self.root/'patched.asar',self.root)
+        self.assertIn('.vite/build/codex-labels-main.cjs', changed)
+
+    def test_any_well_formed_newer_version_is_accepted(self):
+        self.files['package.json'] = b'{"version":"27.100.1"}'
+        write_archive(self.archive, self.files)
+        self.assertEqual(builder.validate_source(self.source), '27.100.1')
+        self.assertIn(ACTIVITY_BUNDLE, builder.build_asar(self.archive, self.root/'patched.asar', self.root))
+
+    def test_missing_bootstrap_structure_is_rejected(self):
+        del self.files['.vite/build/preload.js']
+        write_archive(self.archive, self.files)
+        with self.assertRaisesRegex(ValueError, 'Unsupported app structure'):
+            builder.validate_source(self.source)
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported app structure'):
+            builder.build_asar(self.archive, self.root/'bad.asar', self.root)
         self.assertFalse((self.root/'bad.asar').exists())
 
-    def test_missing_activity_bundle_is_rejected(self):
-        write_archive(self.archive,self.files,activity=False)
-        with self.assertRaisesRegex(RuntimeError,'Unsupported activity catalog bundle'):
-            builder.build_asar(self.archive,self.root/'bad.asar',self.root)
+    def test_refresh_replaces_previous_activity_hook_once(self):
+        first = self.root/'first.asar'
+        builder.build_asar(self.archive, first, self.root)
+        second = self.root/'second.asar'
+        builder.build_asar(first, second, self.root, refresh=True)
+        content = read_archive(second)[ACTIVITY_BUNDLE][0]
+        self.assertEqual(content.count(b'__codexLabelsActivitySync.observe(n,'), 2)
+        self.assertEqual(content.count(b'root.__codexLabelsActivitySync = createActivitySync()'), 1)
+
+    def test_newest_patchable_installation_is_selected(self):
+        older = self.root/'older'
+        write_archive(older/'resources/app.asar', {**self.files, 'package.json': b'{"version":"26.9.1"}'})
+        (older/'ChatGPT.exe').write_bytes(b'')
+        broken = self.root/'broken'
+        write_archive(broken/'resources/app.asar', {'package.json': b'{"version":"99.0.0"}'})
+        (broken/'ChatGPT.exe').write_bytes(b'')
+        self.assertEqual(builder.newest_source([older, broken, self.source]), self.source.resolve())
+        with self.assertRaisesRegex(ValueError, 'installation not found'):
+            builder.newest_source([broken])
 
     def test_unsupported_version_is_rejected_before_creating_target(self):
         self.files['package.json'] = b'{"version":"unsupported"}'

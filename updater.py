@@ -122,7 +122,9 @@ def unpack(data, expected_version, supported_version):
                 or len(update_files) != len(set(update_files)) or set(update_files) != UPDATE_FILES):
             raise ValueError(MANUAL_UPGRADE)
         if (info.get('version') != expected_version
-                or not isinstance(info.get('supportedAppVersion'), str) or info['supportedAppVersion'] not in installed_versions
+                or not isinstance(info.get('supportedAppVersion'), str)
+                # Packages that detect the app structure are not tied to one Codex build.
+                or (info.get('appVersionPolicy') != 'detect' and info['supportedAppVersion'] not in installed_versions)
                 or info.get('containsCodexBinaries') is not False
                 or not isinstance(info.get('sourceCommit'), str) or not re.fullmatch(r'[0-9a-f]{40}', info['sourceCommit'])):
             raise ValueError('현재 Codex와 호환되지 않는 업데이트입니다. 기존 버전을 유지합니다.')

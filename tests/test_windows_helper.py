@@ -30,11 +30,13 @@ class WindowsHelperTests(unittest.TestCase):
         self.root = self.base/'라벨 설치 폴더'
         self.source = self.base/'official/app'
         write_archive(self.source/'resources/app.asar', {
-            'package.json': json.dumps({'version': builder.SUPPORTED_APP_VERSION}).encode(),
+            'package.json': json.dumps({'version': builder.VERIFIED_APP_VERSION}).encode(),
             '.vite/build/early-bootstrap.js': b'/* bootstrap */',
             '.vite/build/preload.js': b'/* preload */', 'unchanged.txt': b'original'})
         (self.source/'ChatGPT.exe').write_bytes(b'synthetic-executable-never-run')
         self.running = patch.object(helper, 'running_apps', return_value=[]).start()
+        # Never discover the real Store installation from tests.
+        patch.object(helper, 'installed_sources', return_value=[self.source]).start()
         self.addCleanup(patch.stopall)
 
     def test_discovery_uses_registered_installation_on_nondefault_drive_path(self):
@@ -286,6 +288,63 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(state['downloadedVersion'],helper.VERSION)
         self.assertTrue(state['pendingRestart'])
 
+    def upgrade_official(self, version='27.100.1'):
+        write_archive(self.source/'resources/app.asar', {
+            'package.json': json.dumps({'version': version}).encode(),
+            '.vite/build/early-bootstrap.js': b'/* bootstrap */',
+            '.vite/build/preload.js': b'/* preload */', 'unchanged.txt': b'upgraded'})
+
+    def launch_quietly(self):
+        with patch.object(helper,'profile_path',return_value=self.base/'profile'), \
+                patch.object(helper.subprocess,'Popen',return_value=Mock(pid=123)) as spawn:
+            result=helper.launch(self.root)
+        spawn.assert_called_once()
+        return result
+
+    def test_launch_follows_newer_official_codex_and_keeps_personal_files(self):
+        helper.prepare(self.root,self.source)
+        (self.root/'labels.json').write_bytes(b'{"custom":"preserve"}')
+        self.upgrade_official()
+        self.launch_quietly()
+        receipt=helper.read_receipt(self.root)
+        self.assertEqual(receipt['sourceAppVersion'],'27.100.1')
+        self.assertEqual(receipt['sourceAsarSha256'],builder.file_hash(self.source/'resources/app.asar'))
+        self.assertEqual((self.root/'labels.json').read_bytes(),b'{"custom":"preserve"}')
+        self.assertEqual(len(list((self.root/'runtime').glob('app.backup-*'))),1)
+
+    def test_unpatchable_official_update_keeps_runtime_and_is_not_retried(self):
+        helper.prepare(self.root,self.source)
+        before=(self.root/'runtime/app/resources/app.asar').read_bytes()
+        self.upgrade_official()
+        with patch.object(builder,'prepare_runtime',side_effect=RuntimeError('new structure')) as build:
+            self.launch_quietly()
+            self.assertEqual(build.call_count,1)
+            self.assertIn('new structure',helper.recovery.state(self.root)['notice'])
+            self.launch_quietly()
+            self.assertEqual(build.call_count,1)
+        self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),before)
+        self.assertEqual(helper.read_receipt(self.root)['sourceAppVersion'],builder.VERIFIED_APP_VERSION)
+        self.assertNotIn(helper.recovery.state(self.root).get('phase'),('switching','pending','failed'))
+
+    def test_running_labels_is_never_rebuilt_for_official_update(self):
+        helper.prepare(self.root,self.source)
+        self.upgrade_official()
+        self.running.return_value=[(self.root/'runtime/app/ChatGPT.exe').resolve()]
+        with patch.object(helper,'prepare') as prepare:
+            self.launch_quietly()
+        prepare.assert_not_called()
+
+    def test_completed_update_prunes_all_but_the_rollback_backup(self):
+        helper.prepare(self.root,self.source)
+        stale=self.root/'runtime/app.backup-20200101-000000-stale'
+        stale.mkdir()
+        self.upgrade_official()
+        helper.prepare(self.root,self.source)
+        keep=helper.recovery.backup_path(self.root,helper.recovery.state(self.root))
+        helper.recovery.complete(self.root)
+        self.assertFalse(stale.exists())
+        self.assertTrue(keep.is_dir())
+
     def test_original_codex_version_notice_reads_newer_unsupported_install_without_patching(self):
         helper.prepare(self.root,self.source)
         original=(self.root/'runtime/app/resources/app.asar').read_bytes()
@@ -295,7 +354,7 @@ class WindowsHelperTests(unittest.TestCase):
             self.assertEqual(helper.codex_status(self.root)['state'],'same')
             write_archive(self.source/'resources/app.asar',{'package.json':b'{"version":"27.100.1"}'})
             state=helper.codex_status(self.root)
-        self.assertEqual(state,{'state':'changed','baseVersion':builder.SUPPORTED_APP_VERSION,'installedVersion':'27.100.1','newer':True})
+        self.assertEqual(state,{'state':'changed','baseVersion':builder.VERIFIED_APP_VERSION,'installedVersion':'27.100.1','newer':True})
         self.assertEqual((self.root/'runtime/app/resources/app.asar').read_bytes(),original)
         self.assertEqual((self.root/'labels.json').read_bytes(),config)
         self.assertEqual((self.root/'assignments.json').read_bytes(),assignments)
@@ -305,7 +364,7 @@ class WindowsHelperTests(unittest.TestCase):
         receipt=helper.read_receipt(self.root);receipt.pop('sourceAppVersion',None)
         helper.write_json(self.root/'runtime/app/codex-labels-build.json',receipt)
         with patch.object(helper,'installed_sources',return_value=[self.source]):
-            self.assertEqual(helper.codex_status(self.root)['baseVersion'],builder.SUPPORTED_APP_VERSION)
+            self.assertEqual(helper.codex_status(self.root)['baseVersion'],builder.VERIFIED_APP_VERSION)
         with patch.object(helper,'installed_sources',side_effect=RuntimeError('unavailable')):
             self.assertEqual(helper.codex_status(self.root)['state'],'unavailable')
 

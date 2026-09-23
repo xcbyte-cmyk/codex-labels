@@ -135,6 +135,15 @@ class UpdateTests(unittest.TestCase):
         result=updater.stage(self.root,self.current,{'27.100.1'},self.reader())
         self.assertTrue(result['available'])
 
+    def test_structure_detecting_package_is_not_tied_to_the_installed_codex_version(self):
+        info=json.loads(self.files['build-info.json']);info.update(supportedAppVersion='26.917.51856',appVersionPolicy='detect')
+        self.files['build-info.json']=json.dumps(info).encode()
+        self.assertIn('CodexLabelsHelper.exe',updater.unpack(self.bundle(),self.latest,{'28.1.0'}))
+        info['appVersionPolicy']='exact'
+        self.files['build-info.json']=json.dumps(info).encode()
+        with self.assertRaisesRegex(ValueError,'호환'):
+            updater.unpack(self.bundle(),self.latest,{'28.1.0'})
+
     def test_unsafe_redirects_and_invalid_versions(self):
         for url in ['http://github.com/x','https://evil.test/x','https://github.com.evil.test/x','https://u:p@github.com/x','file:///x']:
             with self.assertRaises(ValueError):updater.safe_url(url)
